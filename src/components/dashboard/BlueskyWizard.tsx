@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { AtSign, Check, Copy, Loader2, X } from "lucide-react";
+import { AlertTriangle, AtSign, Check, Copy, Loader2, RotateCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,18 @@ import { resolveBskyHandle } from "@/lib/verification.functions";
 import { cn } from "@/lib/utils";
 
 type Health = "idle" | "checking" | "ok" | "fail";
+
+/** Turns any resolve failure into a short, actionable sentence. */
+function resolveHint(error: string): string {
+  const e = error.toLowerCase();
+  if (e.includes("not found") || e.includes("unable to resolve")) {
+    return "Bluesky does not know this handle. Check the spelling — it usually ends in .bsky.social.";
+  }
+  if (e.includes("network") || e.includes("fetch") || e.includes("timeout")) {
+    return "The AT Protocol directory did not answer. Wait a moment and retry.";
+  }
+  return error;
+}
 
 function Step({
   n,
@@ -54,6 +66,9 @@ export function BlueskyWizard() {
   const [did, setDid] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<Health>("idle");
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -78,15 +93,22 @@ export function BlueskyWizard() {
 
   const onResolve = async () => {
     setBusy(true);
+    setResolveError(null);
+    setAttempts((n) => n + 1);
     try {
       const res = await resolve({ data: { handle } });
       if (res.success) {
         setDid(res.did);
+        setResolveError(null);
         toast.success(`DID resolved for @${res.handle}`);
       } else {
+        setResolveError(resolveHint(res.error));
         toast.error(res.error);
       }
-    } catch {
+    } catch (err) {
+      setResolveError(
+        resolveHint(err instanceof Error ? err.message : "Could not reach the AT Protocol directory."),
+      );
       toast.error("Could not resolve that handle right now.");
     } finally {
       setBusy(false);
@@ -95,12 +117,25 @@ export function BlueskyWizard() {
 
   const onHealthCheck = async () => {
     setHealth("checking");
+    setHealthError(null);
     try {
       const res = await fetch(wellKnown, { cache: "no-store" });
       const body = (await res.text()).trim();
-      setHealth(res.ok && body.startsWith("did:") ? "ok" : "fail");
+      if (res.ok && body.startsWith("did:")) {
+        setHealth("ok");
+        return;
+      }
+      setHealth("fail");
+      setHealthError(
+        !res.ok
+          ? `The endpoint answered ${res.status}. Enable your subdomain in the Subdomain panel, then retry.`
+          : "The endpoint answered, but not with a DID. Resolve your DID in step 1 first.",
+      );
     } catch {
       setHealth("fail");
+      setHealthError(
+        "The endpoint could not be reached — DNS for your subdomain may still be propagating. Retry in a few minutes.",
+      );
     }
   };
 
@@ -134,6 +169,27 @@ export function BlueskyWizard() {
               Resolve DID
             </Button>
           </div>
+          {resolveError && (
+            <div className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <p role="alert" className="text-xs text-destructive">
+                  {resolveError}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 rounded-lg text-xs"
+                  disabled={busy || handle.trim().length < 3}
+                  onClick={onResolve}
+                >
+                  <RotateCw className="mr-1.5 h-3 w-3" aria-hidden />
+                  Retry{attempts > 1 ? ` (${attempts})` : ""}
+                </Button>
+              </div>
+            </div>
+          )}
           {did && (
             <p className="break-all font-mono text-[11px] text-muted-foreground">Saved DID: {did}</p>
           )}
@@ -183,9 +239,12 @@ export function BlueskyWizard() {
               </span>
             )}
             {health === "fail" && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
-                <X className="h-3.5 w-3.5" aria-hidden /> Not reachable yet — resolve your DID and
-                enable your subdomain first.
+              <span
+                role="alert"
+                className="inline-flex items-start gap-1 text-xs font-medium text-destructive"
+              >
+                <X className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                {healthError ?? "Not reachable yet — resolve your DID and enable your subdomain first."}
               </span>
             )}
           </div>

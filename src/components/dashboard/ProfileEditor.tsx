@@ -60,6 +60,7 @@ import {
   isReservedHandle,
   newBlockId,
   normalizeHandle,
+  profilePath,
   type ProfileBlock,
   type ProfileRecord,
 } from "@/lib/profile";
@@ -579,7 +580,7 @@ export function ProfileEditor() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                    rout.be/u/@{normalized || "handle"}
+                    rout.be{profilePath(normalized || "handle", verified)}
                   </span>
                   <button
                     type="button"
@@ -592,7 +593,7 @@ export function ProfileEditor() {
                     type="button"
                     onClick={() => {
                       void navigator.clipboard.writeText(
-                        `https://rout.be/u/@${normalized || "handle"}`,
+                        `https://rout.be${profilePath(normalized || "handle", verified)}`,
                       );
                       toast.success("Link copied!");
                     }}

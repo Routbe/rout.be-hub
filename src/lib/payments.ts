@@ -399,3 +399,46 @@ export function inboundFailureReason(row: {
   }
   return "The payment row exists but was never activated — the e-mail arrived before the payment row existed, or activation failed mid-way. Reprocess to retry the matcher.";
 }
+
+/** Column order of the Inbound Payments CSV export (kept in one place so the UI and its test agree). */
+export const INBOUND_CSV_COLUMNS = [
+  "Payment ID",
+  "Timestamp",
+  "Amount",
+  "Currency",
+  "Parsed Reference",
+  "Matched User",
+  "Status",
+  "Error Reason",
+] as const;
+
+export type InboundExportRow = {
+  eventId: string;
+  reference: string;
+  receivedAt: string;
+  matched: boolean;
+  status: string | null;
+  amountCents: number | null;
+  donationCents: number | null;
+  username: string | null;
+  email: string | null;
+};
+
+/**
+ * Maps the inbound rows *currently rendered in the table* to CSV records.
+ * Pure on purpose: the export must contain exactly the filtered rows, so this
+ * takes the same array the table renders and never re-queries.
+ */
+export function inboundCsvRows(rows: InboundExportRow[]): Record<string, string>[] {
+  return rows.map((r) => ({
+    "Payment ID": r.eventId,
+    Timestamp: r.receivedAt,
+    Amount:
+      r.amountCents === null ? "" : ((r.amountCents + (r.donationCents ?? 0)) / 100).toFixed(2),
+    Currency: r.amountCents === null ? "" : "EUR",
+    "Parsed Reference": r.reference,
+    "Matched User": r.username ? `@${r.username}` : (r.email ?? ""),
+    Status: r.matched ? (r.status ?? "matched") : "unmatched",
+    "Error Reason": inboundFailureReason(r) ?? "",
+  }));
+}
