@@ -2013,6 +2013,86 @@ export default function Admin() {
       </div>
 
       {/* Reject a payment ------------------------------------------------ */}
+      <Dialog
+        open={Boolean(inboundDetail)}
+        onOpenChange={(open) => !open && setInboundDetail(null)}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Inbound payment {inboundDetail?.reference}</DialogTitle>
+            <DialogDescription>
+              Everything parsed out of the forwarded bank notification.
+            </DialogDescription>
+          </DialogHeader>
+          {inboundDetail ? (
+            <div className="space-y-3 text-sm">
+              <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-2">
+                <dt className="text-muted-foreground">Payment ID</dt>
+                <dd className="break-all font-mono text-xs">{inboundDetail.eventId}</dd>
+                <dt className="text-muted-foreground">Timestamp</dt>
+                <dd>{shortDateTime(inboundDetail.receivedAt)}</dd>
+                <dt className="text-muted-foreground">Amount</dt>
+                <dd>
+                  {inboundDetail.amountCents === null
+                    ? "—"
+                    : euro(inboundDetail.amountCents + (inboundDetail.donationCents ?? 0))}
+                  {inboundDetail.donationCents
+                    ? ` (incl. ${euro(inboundDetail.donationCents)} tip)`
+                    : ""}
+                </dd>
+                <dt className="text-muted-foreground">Currency</dt>
+                <dd>{inboundDetail.amountCents === null ? "—" : "EUR"}</dd>
+                <dt className="text-muted-foreground">Parsed reference</dt>
+                <dd className="font-mono">{inboundDetail.reference}</dd>
+                <dt className="text-muted-foreground">Payer</dt>
+                <dd className="break-all">
+                  {inboundDetail.username ? `@${inboundDetail.username}` : "—"}
+                  {inboundDetail.email ? ` · ${inboundDetail.email}` : ""}
+                </dd>
+                <dt className="text-muted-foreground">Status</dt>
+                <dd>
+                  <StatusBadge
+                    status={inboundDetail.matched ? (inboundDetail.status ?? "matched") : "unmatched"}
+                  />
+                </dd>
+              </dl>
+
+              {inboundFailureReason(inboundDetail) ? (
+                <p
+                  data-testid="inbound-failure-reason"
+                  className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive-foreground"
+                >
+                  <strong className="mb-1 block text-destructive">Not activated</strong>
+                  {inboundFailureReason(inboundDetail)}
+                </p>
+              ) : (
+                <p className="rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                  Matched and activated — the membership and @rout.be alias are live.
+                </p>
+              )}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInboundDetail(null)}>
+              Close
+            </Button>
+            {inboundDetail && inboundFailureReason(inboundDetail) ? (
+              <Button
+                disabled={reprocessing === inboundDetail.eventId}
+                onClick={() => void onReprocess(inboundDetail)}
+              >
+                {reprocessing === inboundDetail.eventId ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="mr-1.5 h-4 w-4" aria-hidden />
+                )}
+                Reprocess payment
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(rejecting)} onOpenChange={(open) => !open && setRejecting(null)}>
         <DialogContent>
           <DialogHeader>
