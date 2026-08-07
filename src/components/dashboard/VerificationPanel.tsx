@@ -3,8 +3,6 @@ import { useServerFn } from "@tanstack/react-start";
 import { BadgeCheck, Copy, CreditCard, Landmark, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -49,7 +47,6 @@ export function VerificationPanel() {
   const [showSepa, setShowSepa] = useState(false);
   const [sepaRef, setSepaRef] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
-  const [did, setDid] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("stripe");
   const [plan, setPlan] = useState<DonationPlan>("none");
 
@@ -118,10 +115,6 @@ export function VerificationPanel() {
     }
   };
 
-  const wellKnownUrl =
-    typeof window === "undefined"
-      ? `https://rout.be/.well-known/atproto-did/${handle || "handle"}`
-      : `${window.location.origin}/.well-known/atproto-did/${handle || "handle"}`;
 
   return (
     <section className="space-y-4 rounded-none border border-border bg-card p-5">
@@ -355,39 +348,6 @@ export function VerificationPanel() {
         </div>
       )}
 
-      <div className="space-y-2 border border-border p-4">
-        <Label htmlFor="bsky-did" className="text-xs font-semibold">
-          Bluesky DID
-        </Label>
-        <Input
-          id="bsky-did"
-          value={did}
-          onChange={(e) => setDid(e.target.value)}
-          placeholder="did:plc:123..."
-          className="rounded-none"
-        />
-        <p className="text-[11px] text-muted-foreground">
-          Enter your Bluesky DID for handle resolution.
-        </p>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          .well-known endpoint
-        </p>
-        <div className="flex items-start gap-1.5">
-          <code className="min-w-0 flex-1 break-all border border-border bg-muted p-2 font-mono text-xs">
-            {wellKnownUrl}
-          </code>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            aria-label="Copy .well-known endpoint"
-            onClick={() => copy(wellKnownUrl, ".well-known endpoint")}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
     </section>
   );
 }
