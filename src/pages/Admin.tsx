@@ -324,6 +324,8 @@ export default function Admin() {
   const [inboundPage, setInboundPage] = useState(1);
   const [inboundPerPage, setInboundPerPage] = useState(20);
   const [inboundLoading, setInboundLoading] = useState(false);
+  const [inboundDetail, setInboundDetail] = useState<InboundRow | null>(null);
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
 
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
