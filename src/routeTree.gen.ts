@@ -37,6 +37,7 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardAccountRouteImport } from './routes/dashboard.account'
 import { Route as DashboardApiRouteImport } from './routes/dashboard.api'
 import { Route as DashboardDomainsRouteImport } from './routes/dashboard.domains'
+import { Route as FreeAtChar123usernameChar125RouteImport } from './routes/free.@{$username}'
 import { Route as StatsTokenRouteImport } from './routes/stats.$token'
 import { Route as UAtChar123usernameChar125RouteImport } from './routes/u.@{$username}'
 import { Route as ApiPublicHealthRouteImport } from './routes/api/public/health'
@@ -193,6 +194,12 @@ const DashboardDomainsRoute = DashboardDomainsRouteImport.update({
   path: '/domains',
   getParentRoute: () => DashboardRoute,
 } as any)
+const FreeAtChar123usernameChar125Route =
+  FreeAtChar123usernameChar125RouteImport.update({
+    id: '/free/@{$username}',
+    path: '/free/@{$username}',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const StatsTokenRoute = StatsTokenRouteImport.update({
   id: '/stats/$token',
   path: '/stats/$token',
@@ -295,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/account': typeof DashboardAccountRoute
   '/dashboard/api': typeof DashboardApiRoute
   '/dashboard/domains': typeof DashboardDomainsRoute
+  '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
   '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard/': typeof DashboardIndexRoute
@@ -338,6 +346,7 @@ export interface FileRoutesByTo {
   '/dashboard/account': typeof DashboardAccountRoute
   '/dashboard/api': typeof DashboardApiRoute
   '/dashboard/domains': typeof DashboardDomainsRoute
+  '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
   '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard': typeof DashboardIndexRoute
@@ -383,6 +392,7 @@ export interface FileRoutesById {
   '/dashboard/account': typeof DashboardAccountRoute
   '/dashboard/api': typeof DashboardApiRoute
   '/dashboard/domains': typeof DashboardDomainsRoute
+  '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
   '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard/': typeof DashboardIndexRoute
@@ -429,6 +439,7 @@ export interface FileRouteTypes {
     | '/dashboard/account'
     | '/dashboard/api'
     | '/dashboard/domains'
+    | '/free/@{$username}'
     | '/stats/$token'
     | '/u/@{$username}'
     | '/dashboard/'
@@ -472,6 +483,7 @@ export interface FileRouteTypes {
     | '/dashboard/account'
     | '/dashboard/api'
     | '/dashboard/domains'
+    | '/free/@{$username}'
     | '/stats/$token'
     | '/u/@{$username}'
     | '/dashboard'
@@ -516,6 +528,7 @@ export interface FileRouteTypes {
     | '/dashboard/account'
     | '/dashboard/api'
     | '/dashboard/domains'
+    | '/free/@{$username}'
     | '/stats/$token'
     | '/u/@{$username}'
     | '/dashboard/'
@@ -558,6 +571,7 @@ export interface RootRouteChildren {
   TermsRoute: typeof TermsRoute
   DotwellKnownAtprotoDidRoute: typeof DotwellKnownAtprotoDidRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
+  FreeAtChar123usernameChar125Route: typeof FreeAtChar123usernameChar125Route
   StatsTokenRoute: typeof StatsTokenRoute
   UAtChar123usernameChar125Route: typeof UAtChar123usernameChar125Route
 }
@@ -760,6 +774,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardDomainsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/free/@{$username}': {
+      id: '/free/@{$username}'
+      path: '/free/@{$username}'
+      fullPath: '/free/@{$username}'
+      preLoaderRoute: typeof FreeAtChar123usernameChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/stats/$token': {
       id: '/stats/$token'
       path: '/stats/$token'
@@ -936,6 +957,7 @@ const rootRouteChildren: RootRouteChildren = {
   TermsRoute: TermsRoute,
   DotwellKnownAtprotoDidRoute: DotwellKnownAtprotoDidRoute,
   AuthCallbackRoute: AuthCallbackRoute,
+  FreeAtChar123usernameChar125Route: FreeAtChar123usernameChar125Route,
   StatsTokenRoute: StatsTokenRoute,
   UAtChar123usernameChar125Route: UAtChar123usernameChar125Route,
 }
