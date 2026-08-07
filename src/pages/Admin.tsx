@@ -427,6 +427,58 @@ export default function Admin() {
     [inboundPage, inboundPerPage, loadInbound],
   );
 
+  const reprocessInbound = useServerFn(reprocessInboundPayment);
+
+  /** Re-runs the reference matcher for one inbound bank e-mail. */
+  const onReprocess = async (row: InboundRow) => {
+    setReprocessing(row.eventId);
+    try {
+      const res = await reprocessInbound({ data: { eventId: row.eventId } });
+      if (res.reason === "activated") {
+        toast.success(`${res.reference} matched — membership activated.`);
+      } else if (res.reason === "already_active") {
+        toast.info(`${res.reference} was already active.`);
+      } else {
+        toast.error(`${res.reference} still has no matching payment.`);
+      }
+      await refreshInbound(inboundPage, inboundPerPage);
+      setInboundDetail(null);
+    } catch {
+      toast.error("Could not reprocess this payment.");
+    } finally {
+      setReprocessing(null);
+    }
+  };
+
+  /** Exports the inbound rows currently loaded in the table. */
+  const onExportInbound = () => {
+    if (inbound.length === 0) return;
+    const rows = inbound.map((r) => ({
+      "Payment ID": r.eventId,
+      Timestamp: r.receivedAt,
+      Amount: r.amountCents === null ? "" : ((r.amountCents + (r.donationCents ?? 0)) / 100).toFixed(2),
+      Currency: r.amountCents === null ? "" : "EUR",
+      "Parsed Reference": r.reference,
+      "Matched User": r.username ? `@${r.username}` : (r.email ?? ""),
+      Status: r.matched ? (r.status ?? "matched") : "unmatched",
+      "Error Reason": inboundFailureReason(r) ?? "",
+    }));
+    downloadCsv(
+      `rout-inbound-payments-${new Date().toISOString().slice(0, 10)}.csv`,
+      toCsv(rows, [
+        "Payment ID",
+        "Timestamp",
+        "Amount",
+        "Currency",
+        "Parsed Reference",
+        "Matched User",
+        "Status",
+        "Error Reason",
+      ]),
+    );
+    toast.success("Inbound payments exported.");
+  };
+
   const refreshAliases = useCallback(
     async (page = aliasPage, perPage = aliasPerPage) => {
       setAliasLoading(true);
