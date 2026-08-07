@@ -710,6 +710,79 @@ export type InboundPaymentRow = {
   email: string | null;
 };
 
+/** Why a parsed reference is not (yet) an activated membership. */
+export function inboundFailureReason(row: {
+  matched: boolean;
+  status: string | null;
+}): string | null {
+  if (!row.matched) {
+    return "No verification payment exists for this reference. The reference was parsed from the bank e-mail, but no member ever requested it (typo in the transfer, or the payment row was deleted).";
+  }
+  if (row.status === "paid") return null;
+  if (row.status === "failed") {
+    return "The linked payment was rejected by an admin. Reopen it before reprocessing.";
+  }
+  return "The payment row exists but was never activated — the webhook matched after the row was created, or activation failed mid-way. Reprocess to retry.";
+}
+
+/**
+ * Re-runs the reference matcher for a single inbound event: looks the payment
+ * up again against current accounts and activates it when it now resolves.
+ */
+export async function reprocessInboundPayment(eventId: string, adminId: string) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const reference = eventId.replace(/^inbound:/, "").toUpperCase();
+
+  const { data: payment } = await supabaseAdmin
+    .from("verification_payments")
+    .select("id, user_id, tier, status")
+    .eq("reference_code", reference)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!payment) {
+    return { ok: false as const, matched: false, reference, reason: "unknown_reference" };
+  }
+  if (payment.status === "paid") {
+    return { ok: true as const, matched: true, reference, reason: "already_active" };
+  }
+
+  await supabaseAdmin
+    .from("verification_payments")
+    .update({ status: "paid", provider_ref: reference })
+    .eq("id", payment.id);
+
+  await supabaseAdmin
+    .from("profiles")
+    .update({
+      is_paid: true,
+      is_early_believer: true,
+      payment_method: "bank_transfer_manual_reprocess",
+      tier: payment.tier,
+      verified: true,
+      status: "active",
+      verified_at: new Date().toISOString(),
+    })
+    .eq("id", payment.user_id);
+
+  await writeAudit({
+    adminId,
+    action: "PAYMENT_REPROCESSED",
+    targetUserId: payment.user_id,
+    notes: `Reference ${reference} re-matched manually from the inbound audit table.`,
+  });
+
+  try {
+    const { drainAliasSyncQueue } = await import("./alias-sync.server");
+    await drainAliasSyncQueue(5);
+  } catch (error) {
+    console.error("alias drain after reprocess failed", error);
+  }
+
+  return { ok: true as const, matched: true, reference, reason: "activated" };
+}
+
 /**
  * Every `ROUT-XXXX` reference parsed out of an inbound bank notification,
  * joined with the payment (when one matched) and the account it activated.
