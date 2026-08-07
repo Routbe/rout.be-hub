@@ -1678,16 +1678,28 @@ export default function Admin() {
             <section className="space-y-3 rounded-2xl border border-border bg-card p-4 pb-6 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-medium">Inbound bank references</h2>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  data-testid="inbound-refresh"
-                  disabled={inboundLoading}
-                  onClick={() => void refreshInbound(inboundPage, inboundPerPage)}
-                >
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Refresh
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    data-testid="inbound-export"
+                    disabled={inbound.length === 0}
+                    onClick={onExportInbound}
+                  >
+                    <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Export CSV
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    data-testid="inbound-refresh"
+                    disabled={inboundLoading}
+                    onClick={() => void refreshInbound(inboundPage, inboundPerPage)}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Refresh
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
                 Every <span className="font-mono">ROUT-XXXX</span> reference parsed out of a
@@ -1715,11 +1727,25 @@ export default function Admin() {
                         <th className="py-2 pr-3">Amount</th>
                         <th className="py-2 pr-3">Status</th>
                         <th className="py-2 pr-3">User</th>
+                        <th className="py-2" />
                       </tr>
                     </thead>
                     <tbody data-testid="inbound-rows">
                       {inbound.map((r) => (
-                        <tr key={r.eventId} className="border-t border-border/60">
+                        <tr
+                          key={r.eventId}
+                          tabIndex={0}
+                          role="button"
+                          data-testid="inbound-row"
+                          className="cursor-pointer border-t border-border/60 hover:bg-muted/50 focus:bg-muted/50 focus:outline-none"
+                          onClick={() => setInboundDetail(r)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setInboundDetail(r);
+                            }
+                          }}
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap">
                             {shortDateTime(r.receivedAt)}
                           </td>
@@ -1737,6 +1763,27 @@ export default function Admin() {
                           </td>
                           <td className="py-2 pr-3 break-all">
                             {r.username ? `@${r.username}` : (r.email ?? "—")}
+                          </td>
+                          <td className="py-2 text-right">
+                            {inboundFailureReason(r) ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8"
+                                disabled={reprocessing === r.eventId}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onReprocess(r);
+                                }}
+                              >
+                                {reprocessing === r.eventId ? (
+                                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                                )}
+                                Reprocess
+                              </Button>
+                            ) : null}
                           </td>
                         </tr>
                       ))}
