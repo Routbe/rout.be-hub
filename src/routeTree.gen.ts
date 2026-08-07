@@ -39,6 +39,7 @@ import { Route as DashboardApiRouteImport } from './routes/dashboard.api'
 import { Route as DashboardDomainsRouteImport } from './routes/dashboard.domains'
 import { Route as FreeAtChar123usernameChar125RouteImport } from './routes/free.@{$username}'
 import { Route as StatsTokenRouteImport } from './routes/stats.$token'
+import { Route as UAtChar123usernameChar125RouteImport } from './routes/u.@{$username}'
 import { Route as ApiPublicHealthRouteImport } from './routes/api/public/health'
 import { Route as ApiPublicOpenapiDotjsonRouteImport } from './routes/api/public/openapi[.]json'
 import { Route as ApiPublicCronSecurityAuditRouteImport } from './routes/api/public/cron/security-audit'
@@ -204,6 +205,12 @@ const StatsTokenRoute = StatsTokenRouteImport.update({
   path: '/stats/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UAtChar123usernameChar125Route =
+  UAtChar123usernameChar125RouteImport.update({
+    id: '/u/@{$username}',
+    path: '/u/@{$username}',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicHealthRoute = ApiPublicHealthRouteImport.update({
   id: '/public/health',
   path: '/public/health',
@@ -297,6 +304,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/domains': typeof DashboardDomainsRoute
   '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
+  '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard/': typeof DashboardIndexRoute
   '/api/public/health': typeof ApiPublicHealthRoute
   '/api/public/openapi.json': typeof ApiPublicOpenapiDotjsonRoute
@@ -340,6 +348,7 @@ export interface FileRoutesByTo {
   '/dashboard/domains': typeof DashboardDomainsRoute
   '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
+  '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard': typeof DashboardIndexRoute
   '/api/public/health': typeof ApiPublicHealthRoute
   '/api/public/openapi.json': typeof ApiPublicOpenapiDotjsonRoute
@@ -385,6 +394,7 @@ export interface FileRoutesById {
   '/dashboard/domains': typeof DashboardDomainsRoute
   '/free/@{$username}': typeof FreeAtChar123usernameChar125Route
   '/stats/$token': typeof StatsTokenRoute
+  '/u/@{$username}': typeof UAtChar123usernameChar125Route
   '/dashboard/': typeof DashboardIndexRoute
   '/api/public/health': typeof ApiPublicHealthRoute
   '/api/public/openapi.json': typeof ApiPublicOpenapiDotjsonRoute
@@ -431,6 +441,7 @@ export interface FileRouteTypes {
     | '/dashboard/domains'
     | '/free/@{$username}'
     | '/stats/$token'
+    | '/u/@{$username}'
     | '/dashboard/'
     | '/api/public/health'
     | '/api/public/openapi.json'
@@ -474,6 +485,7 @@ export interface FileRouteTypes {
     | '/dashboard/domains'
     | '/free/@{$username}'
     | '/stats/$token'
+    | '/u/@{$username}'
     | '/dashboard'
     | '/api/public/health'
     | '/api/public/openapi.json'
@@ -518,6 +530,7 @@ export interface FileRouteTypes {
     | '/dashboard/domains'
     | '/free/@{$username}'
     | '/stats/$token'
+    | '/u/@{$username}'
     | '/dashboard/'
     | '/api/public/health'
     | '/api/public/openapi.json'
@@ -560,6 +573,7 @@ export interface RootRouteChildren {
   AuthCallbackRoute: typeof AuthCallbackRoute
   FreeAtChar123usernameChar125Route: typeof FreeAtChar123usernameChar125Route
   StatsTokenRoute: typeof StatsTokenRoute
+  UAtChar123usernameChar125Route: typeof UAtChar123usernameChar125Route
 }
 
 declare module '@tanstack/react-router' {
@@ -774,6 +788,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StatsTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/u/@{$username}': {
+      id: '/u/@{$username}'
+      path: '/u/@{$username}'
+      fullPath: '/u/@{$username}'
+      preLoaderRoute: typeof UAtChar123usernameChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/health': {
       id: '/api/public/health'
       path: '/public/health'
@@ -938,6 +959,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthCallbackRoute: AuthCallbackRoute,
   FreeAtChar123usernameChar125Route: FreeAtChar123usernameChar125Route,
   StatsTokenRoute: StatsTokenRoute,
+  UAtChar123usernameChar125Route: UAtChar123usernameChar125Route,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

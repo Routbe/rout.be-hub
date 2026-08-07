@@ -112,7 +112,7 @@ export function ProfileHubPicker({ values, onChange }: Props) {
         </p>
         {!verified && (
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Free profiles live on the <strong>/free/</strong> namespace. Verify to claim your custom
+            Free profiles live on the <strong>/u/</strong> namespace. Verify to claim your custom
             handle.
           </p>
         )}

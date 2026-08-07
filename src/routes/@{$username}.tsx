@@ -50,7 +50,7 @@ function PublicProfile() {
   }
 
 
-  // Paid / verified namespace: free profiles live under /free/@handle.
+  // Paid / verified namespace: free profiles live under /u/@handle.
   if (!profile.verified || profile.status !== "active") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-2 bg-background px-6 text-center">
@@ -59,8 +59,8 @@ function PublicProfile() {
           The verified namespace is reserved for verified accounts. This handle lives in the free
           community namespace.
         </p>
-        <a href={`/free/@${username}`} className="mt-2 text-sm font-medium underline">
-          Go to rout.be/free/@{username} →
+        <a href={`/u/@${username}`} className="mt-2 text-sm font-medium underline">
+          Go to rout.be/u/@{username} →
         </a>
       </div>
     );

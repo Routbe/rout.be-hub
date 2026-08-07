@@ -71,7 +71,7 @@ export async function handleSubdomainRequest(request: Request): Promise<Response
       ? `https://bsky.app/profile/${sub}.rout.be`
       : profile.verified
         ? `${url.origin.replace(`${sub}.`, "")}/@${profile.username}`
-        : `${url.origin.replace(`${sub}.`, "")}/free/@${profile.username}`;
+        : `${url.origin.replace(`${sub}.`, "")}/u/@${profile.username}`;
 
   return new Response(null, {
     status: 302,

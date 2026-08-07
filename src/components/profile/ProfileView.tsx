@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BadgeCheck, Mail } from "lucide-react";
 import { blockHref, themeOf, type ProfileRecord } from "@/lib/profile";
 import { SocialPlatformIcon } from "@/lib/social-icons";
+import { BadgeShowcase } from "@/components/profile/BadgeShowcase";
 
 /** Swaps the browser tab icon for the profile's own favicon (or avatar). */
 function useProfileFavicon(url?: string | null) {
@@ -15,7 +16,7 @@ function useProfileFavicon(url?: string | null) {
   }, [url]);
 }
 
-/** Renders a public ROUT link hub for both the /@handle and /free/@handle namespaces. */
+/** Renders a public ROUT link hub for both the /@handle and /u/@handle namespaces. */
 export function ProfileView({ profile, free = false }: { profile: ProfileRecord; free?: boolean }) {
   const t = themeOf(profile.theme);
   const blocks = profile.blocks.filter((b) => !b.hidden && b.value.trim());
@@ -66,7 +67,7 @@ export function ProfileView({ profile, free = false }: { profile: ProfileRecord;
           </span>
         )}
         <p className="mt-1 text-center text-sm" style={{ color: t.muted }}>
-          {free ? "rout.be/free/@" : "@"}
+          {free ? "rout.be/u/@" : "@"}
           {profile.username}
         </p>
         {aliasEmail && (
@@ -84,6 +85,7 @@ export function ProfileView({ profile, free = false }: { profile: ProfileRecord;
           </p>
         )}
 
+        <BadgeShowcase userId={profile.id} theme={t} />
 
         <div className="mt-8 flex w-full flex-col gap-3">
           {blocks.length === 0 && (
