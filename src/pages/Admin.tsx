@@ -39,6 +39,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { euro } from "@/lib/profile";
 import { toCsv, downloadCsv } from "@/lib/csv";
+import { inboundFailureReason } from "@/lib/payments";
 import { needsVipGrant } from "@/lib/handle-rules";
 import {
   amIAdmin,
@@ -55,6 +56,7 @@ import {
   listTransactions,
   listUsers,
   markPaymentManually,
+  reprocessInboundPayment,
   runAliasSync,
   setVerificationStatus,
   suggestHandlesForBankName,
