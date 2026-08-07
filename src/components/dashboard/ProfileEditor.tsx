@@ -60,6 +60,7 @@ import {
   isReservedHandle,
   newBlockId,
   normalizeHandle,
+  profilePath,
   type ProfileBlock,
   type ProfileRecord,
 } from "@/lib/profile";
