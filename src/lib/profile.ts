@@ -164,7 +164,7 @@ export const RESERVED_HANDLES = [
 
 export const isReservedHandle = (h: string) => RESERVED_HANDLES.includes(h);
 
-/** Public path for a profile: paid namespace when verified, /free/@ otherwise. */
+/** Public path for a profile: paid namespace when verified, /u/@ otherwise. */
 export const profilePath = (username: string, verified?: boolean) =>
   verified ? `/@${username}` : `/u/@${username}`;
 

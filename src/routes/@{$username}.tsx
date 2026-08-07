@@ -50,7 +50,7 @@ function PublicProfile() {
   }
 
 
-  // Paid / verified namespace: free profiles live under /free/@handle.
+  // Paid / verified namespace: free profiles live under /u/@handle.
   if (!profile.verified || profile.status !== "active") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-2 bg-background px-6 text-center">

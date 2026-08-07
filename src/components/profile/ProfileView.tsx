@@ -15,7 +15,7 @@ function useProfileFavicon(url?: string | null) {
   }, [url]);
 }
 
-/** Renders a public ROUT link hub for both the /@handle and /free/@handle namespaces. */
+/** Renders a public ROUT link hub for both the /@handle and /u/@handle namespaces. */
 export function ProfileView({ profile, free = false }: { profile: ProfileRecord; free?: boolean }) {
   const t = themeOf(profile.theme);
   const blocks = profile.blocks.filter((b) => !b.hidden && b.value.trim());
