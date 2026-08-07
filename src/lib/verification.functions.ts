@@ -160,7 +160,7 @@ export const resolveBskyHandle = createServerFn({ method: "POST" })
 
     const { error } = await context.supabase
       .from("profiles")
-      .update({ bluesky_did: did, bluesky_handle: handle })
+      .update({ bluesky_did: did })
       .eq("id", context.userId);
     if (error) return { success: false as const, error: "Could not save the DID to your profile." };
 
