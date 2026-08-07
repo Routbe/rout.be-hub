@@ -39,6 +39,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { euro } from "@/lib/profile";
 import { toCsv, downloadCsv } from "@/lib/csv";
+import { inboundFailureReason } from "@/lib/payments";
 import { needsVipGrant } from "@/lib/handle-rules";
 import {
   amIAdmin,
@@ -55,6 +56,7 @@ import {
   listTransactions,
   listUsers,
   markPaymentManually,
+  reprocessInboundPayment,
   runAliasSync,
   setVerificationStatus,
   suggestHandlesForBankName,
@@ -322,6 +324,8 @@ export default function Admin() {
   const [inboundPage, setInboundPage] = useState(1);
   const [inboundPerPage, setInboundPerPage] = useState(20);
   const [inboundLoading, setInboundLoading] = useState(false);
+  const [inboundDetail, setInboundDetail] = useState<InboundRow | null>(null);
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
 
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
@@ -422,6 +426,58 @@ export default function Admin() {
     },
     [inboundPage, inboundPerPage, loadInbound],
   );
+
+  const reprocessInbound = useServerFn(reprocessInboundPayment);
+
+  /** Re-runs the reference matcher for one inbound bank e-mail. */
+  const onReprocess = async (row: InboundRow) => {
+    setReprocessing(row.eventId);
+    try {
+      const res = await reprocessInbound({ data: { eventId: row.eventId } });
+      if (res.reason === "activated") {
+        toast.success(`${res.reference} matched — membership activated.`);
+      } else if (res.reason === "already_active") {
+        toast.info(`${res.reference} was already active.`);
+      } else {
+        toast.error(`${res.reference} still has no matching payment.`);
+      }
+      await refreshInbound(inboundPage, inboundPerPage);
+      setInboundDetail(null);
+    } catch {
+      toast.error("Could not reprocess this payment.");
+    } finally {
+      setReprocessing(null);
+    }
+  };
+
+  /** Exports the inbound rows currently loaded in the table. */
+  const onExportInbound = () => {
+    if (inbound.length === 0) return;
+    const rows = inbound.map((r) => ({
+      "Payment ID": r.eventId,
+      Timestamp: r.receivedAt,
+      Amount: r.amountCents === null ? "" : ((r.amountCents + (r.donationCents ?? 0)) / 100).toFixed(2),
+      Currency: r.amountCents === null ? "" : "EUR",
+      "Parsed Reference": r.reference,
+      "Matched User": r.username ? `@${r.username}` : (r.email ?? ""),
+      Status: r.matched ? (r.status ?? "matched") : "unmatched",
+      "Error Reason": inboundFailureReason(r) ?? "",
+    }));
+    downloadCsv(
+      `rout-inbound-payments-${new Date().toISOString().slice(0, 10)}.csv`,
+      toCsv(rows, [
+        "Payment ID",
+        "Timestamp",
+        "Amount",
+        "Currency",
+        "Parsed Reference",
+        "Matched User",
+        "Status",
+        "Error Reason",
+      ]),
+    );
+    toast.success("Inbound payments exported.");
+  };
 
   const refreshAliases = useCallback(
     async (page = aliasPage, perPage = aliasPerPage) => {
@@ -1622,16 +1678,28 @@ export default function Admin() {
             <section className="space-y-3 rounded-2xl border border-border bg-card p-4 pb-6 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-medium">Inbound bank references</h2>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  data-testid="inbound-refresh"
-                  disabled={inboundLoading}
-                  onClick={() => void refreshInbound(inboundPage, inboundPerPage)}
-                >
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Refresh
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    data-testid="inbound-export"
+                    disabled={inbound.length === 0}
+                    onClick={onExportInbound}
+                  >
+                    <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Export CSV
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    data-testid="inbound-refresh"
+                    disabled={inboundLoading}
+                    onClick={() => void refreshInbound(inboundPage, inboundPerPage)}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Refresh
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
                 Every <span className="font-mono">ROUT-XXXX</span> reference parsed out of a
@@ -1659,11 +1727,25 @@ export default function Admin() {
                         <th className="py-2 pr-3">Amount</th>
                         <th className="py-2 pr-3">Status</th>
                         <th className="py-2 pr-3">User</th>
+                        <th className="py-2" />
                       </tr>
                     </thead>
                     <tbody data-testid="inbound-rows">
                       {inbound.map((r) => (
-                        <tr key={r.eventId} className="border-t border-border/60">
+                        <tr
+                          key={r.eventId}
+                          tabIndex={0}
+                          role="button"
+                          data-testid="inbound-row"
+                          className="cursor-pointer border-t border-border/60 hover:bg-muted/50 focus:bg-muted/50 focus:outline-none"
+                          onClick={() => setInboundDetail(r)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setInboundDetail(r);
+                            }
+                          }}
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap">
                             {shortDateTime(r.receivedAt)}
                           </td>
@@ -1681,6 +1763,27 @@ export default function Admin() {
                           </td>
                           <td className="py-2 pr-3 break-all">
                             {r.username ? `@${r.username}` : (r.email ?? "—")}
+                          </td>
+                          <td className="py-2 text-right">
+                            {inboundFailureReason(r) ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8"
+                                disabled={reprocessing === r.eventId}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onReprocess(r);
+                                }}
+                              >
+                                {reprocessing === r.eventId ? (
+                                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                                )}
+                                Reprocess
+                              </Button>
+                            ) : null}
                           </td>
                         </tr>
                       ))}
@@ -1910,6 +2013,86 @@ export default function Admin() {
       </div>
 
       {/* Reject a payment ------------------------------------------------ */}
+      <Dialog
+        open={Boolean(inboundDetail)}
+        onOpenChange={(open) => !open && setInboundDetail(null)}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Inbound payment {inboundDetail?.reference}</DialogTitle>
+            <DialogDescription>
+              Everything parsed out of the forwarded bank notification.
+            </DialogDescription>
+          </DialogHeader>
+          {inboundDetail ? (
+            <div className="space-y-3 text-sm">
+              <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-2">
+                <dt className="text-muted-foreground">Payment ID</dt>
+                <dd className="break-all font-mono text-xs">{inboundDetail.eventId}</dd>
+                <dt className="text-muted-foreground">Timestamp</dt>
+                <dd>{shortDateTime(inboundDetail.receivedAt)}</dd>
+                <dt className="text-muted-foreground">Amount</dt>
+                <dd>
+                  {inboundDetail.amountCents === null
+                    ? "—"
+                    : euro(inboundDetail.amountCents + (inboundDetail.donationCents ?? 0))}
+                  {inboundDetail.donationCents
+                    ? ` (incl. ${euro(inboundDetail.donationCents)} tip)`
+                    : ""}
+                </dd>
+                <dt className="text-muted-foreground">Currency</dt>
+                <dd>{inboundDetail.amountCents === null ? "—" : "EUR"}</dd>
+                <dt className="text-muted-foreground">Parsed reference</dt>
+                <dd className="font-mono">{inboundDetail.reference}</dd>
+                <dt className="text-muted-foreground">Payer</dt>
+                <dd className="break-all">
+                  {inboundDetail.username ? `@${inboundDetail.username}` : "—"}
+                  {inboundDetail.email ? ` · ${inboundDetail.email}` : ""}
+                </dd>
+                <dt className="text-muted-foreground">Status</dt>
+                <dd>
+                  <StatusBadge
+                    status={inboundDetail.matched ? (inboundDetail.status ?? "matched") : "unmatched"}
+                  />
+                </dd>
+              </dl>
+
+              {inboundFailureReason(inboundDetail) ? (
+                <p
+                  data-testid="inbound-failure-reason"
+                  className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive-foreground"
+                >
+                  <strong className="mb-1 block text-destructive">Not activated</strong>
+                  {inboundFailureReason(inboundDetail)}
+                </p>
+              ) : (
+                <p className="rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                  Matched and activated — the membership and @rout.be alias are live.
+                </p>
+              )}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInboundDetail(null)}>
+              Close
+            </Button>
+            {inboundDetail && inboundFailureReason(inboundDetail) ? (
+              <Button
+                disabled={reprocessing === inboundDetail.eventId}
+                onClick={() => void onReprocess(inboundDetail)}
+              >
+                {reprocessing === inboundDetail.eventId ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="mr-1.5 h-4 w-4" aria-hidden />
+                )}
+                Reprocess payment
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(rejecting)} onOpenChange={(open) => !open && setRejecting(null)}>
         <DialogContent>
           <DialogHeader>

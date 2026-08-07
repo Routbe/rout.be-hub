@@ -124,3 +124,45 @@ export const getVerificationState = createServerFn({ method: "GET" })
       status: data?.status ?? "pending",
     };
   });
+
+/**
+ * Resolves a Bluesky handle to its DID through the AT Protocol identity API and
+ * stores it on the caller's profile, so `<handle>.rout.be/.well-known/atproto-did`
+ * can serve it.
+ */
+export const resolveBskyHandle = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) =>
+    z.object({ handle: z.string().trim().min(1).max(253) }).parse(data),
+  )
+  .handler(async ({ data, context }) => {
+    const handle = data.handle.replace(/\s+/g, "").replace(/^@+/, "").toLowerCase();
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(handle)) {
+      return { success: false as const, error: "That does not look like a Bluesky handle." };
+    }
+
+    let did: string | null = null;
+    try {
+      const res = await fetch(
+        `https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`,
+        { headers: { accept: "application/json" } },
+      );
+      if (!res.ok) {
+        return { success: false as const, error: `Bluesky could not resolve @${handle}.` };
+      }
+      const body = (await res.json()) as { did?: string };
+      did = typeof body.did === "string" && body.did.startsWith("did:") ? body.did : null;
+    } catch {
+      return { success: false as const, error: "Could not reach Bluesky. Try again." };
+    }
+
+    if (!did) return { success: false as const, error: `No DID found for @${handle}.` };
+
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ bluesky_did: did })
+      .eq("id", context.userId);
+    if (error) return { success: false as const, error: "Could not save the DID to your profile." };
+
+    return { success: true as const, did, handle };
+  });

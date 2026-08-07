@@ -401,3 +401,16 @@ export const listInboundPayments = createServerFn({ method: "POST" })
     const { fetchInboundPayments } = await import("./admin-moderation.server");
     return fetchInboundPayments(data.page ?? 1, data.perPage ?? 20);
   });
+
+/** Re-runs the reference matcher for one inbound bank e-mail. */
+export const reprocessInboundPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data: unknown) =>
+    z.object({ eventId: z.string().trim().min(1).max(200) }).parse(data),
+  )
+  .handler(async ({ data, context }) => {
+    const { assertAdminRole } = await import("./admin.server");
+    await assertAdminRole(context.supabase, context.userId);
+    const { reprocessInboundPayment: run } = await import("./admin-moderation.server");
+    return run(data.eventId, context.userId);
+  });

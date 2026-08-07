@@ -41,11 +41,20 @@ export const Route = createFileRoute("/api/public/payments/inbound")({
         if (provided !== token) return new Response("Unauthorized", { status: 401 });
 
         const raw = await request.text();
+        if (raw.trim().length === 0) {
+          return new Response("Bad Request", { status: 400 });
+        }
+
         let parsed: unknown = raw;
+        const contentType = request.headers.get("content-type") ?? "";
         try {
           parsed = JSON.parse(raw);
         } catch {
-          /* ImprovMX may post form-encoded or raw MIME — the text scan covers it */
+          // ImprovMX may post form-encoded or raw MIME — the text scan covers those.
+          // A payload that *claims* to be JSON but is not, is malformed.
+          if (contentType.includes("json")) {
+            return new Response("Bad Request", { status: 400 });
+          }
         }
 
         const haystack = `${raw} ${collectText(parsed)}`;
