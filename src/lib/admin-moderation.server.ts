@@ -710,21 +710,6 @@ export type InboundPaymentRow = {
   email: string | null;
 };
 
-/** Why a parsed reference is not (yet) an activated membership. */
-export function inboundFailureReason(row: {
-  matched: boolean;
-  status: string | null;
-}): string | null {
-  if (!row.matched) {
-    return "No verification payment exists for this reference. The reference was parsed from the bank e-mail, but no member ever requested it (typo in the transfer, or the payment row was deleted).";
-  }
-  if (row.status === "paid") return null;
-  if (row.status === "failed") {
-    return "The linked payment was rejected by an admin. Reopen it before reprocessing.";
-  }
-  return "The payment row exists but was never activated — the webhook matched after the row was created, or activation failed mid-way. Reprocess to retry.";
-}
-
 /**
  * Re-runs the reference matcher for a single inbound event: looks the payment
  * up again against current accounts and activates it when it now resolves.

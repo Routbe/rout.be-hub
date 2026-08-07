@@ -381,3 +381,21 @@ export function validateIban(raw: string): string | null {
   for (const digit of numeric) remainder = (remainder * 10 + Number(digit)) % 97;
   return remainder === 1 ? null : "This IBAN fails its checksum.";
 }
+
+/**
+ * Why a parsed inbound bank reference is not (yet) an activated membership.
+ * Returns null when the reference is fully matched and paid.
+ */
+export function inboundFailureReason(row: {
+  matched: boolean;
+  status: string | null;
+}): string | null {
+  if (!row.matched) {
+    return "No verification payment exists for this reference. It was parsed from the bank e-mail, but no member ever requested it — a typo in the transfer description, or the payment row was removed.";
+  }
+  if (row.status === "paid") return null;
+  if (row.status === "failed") {
+    return "The linked payment was rejected by an admin. Reopen it before reprocessing.";
+  }
+  return "The payment row exists but was never activated — the e-mail arrived before the payment row existed, or activation failed mid-way. Reprocess to retry the matcher.";
+}
