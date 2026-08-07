@@ -5,7 +5,7 @@ import { ProfileMissing, ProfileView } from "@/components/profile/ProfileView";
 import { ProfileSuspended } from "@/components/profile/ProfileSuspended";
 import { useProfileRecord } from "@/hooks/useProfileRecord";
 
-export const Route = createFileRoute("/free/@{$username}")({
+export const Route = createFileRoute("/u/@{$username}")({
   ssr: false,
   head: () => ({
     meta: [
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/free/@{$username}")({
 });
 
 function FreeProfile() {
-  const { username } = useParams({ from: "/free/@{$username}" });
+  const { username } = useParams({ from: "/u/@{$username}" });
   const { profile, suspended, loading } = useProfileRecord(username);
 
   useEffect(() => {

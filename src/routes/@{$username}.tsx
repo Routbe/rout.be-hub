@@ -59,8 +59,8 @@ function PublicProfile() {
           The verified namespace is reserved for verified accounts. This handle lives in the free
           community namespace.
         </p>
-        <a href={`/free/@${username}`} className="mt-2 text-sm font-medium underline">
-          Go to rout.be/free/@{username} →
+        <a href={`/u/@${username}`} className="mt-2 text-sm font-medium underline">
+          Go to rout.be/u/@{username} →
         </a>
       </div>
     );

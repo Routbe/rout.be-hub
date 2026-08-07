@@ -263,7 +263,7 @@ export function ProfileEditor() {
   const normalized = normalizeHandle(handle);
   const reserved = isReservedHandle(normalized);
   const handleOk = isValidHandle(normalized) && !reserved;
-  const publicPath = verified ? `/@${claimed}` : `/free/@${claimed}`;
+  const publicPath = verified ? `/@${claimed}` : `/u/@${claimed}`;
 
   // Debounced real-time handle availability check against the profiles table.
   useEffect(() => {
@@ -499,7 +499,7 @@ export function ProfileEditor() {
         </span>
         <span className="min-w-0 break-all font-mono text-[13px] font-medium">
           {host}
-          {verified ? "/@" : "/free/@"}
+          {verified ? "/@" : "/u/@"}
           {normalized || "handle"}
         </span>
         {claimed && (
@@ -576,7 +576,7 @@ export function ProfileEditor() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                    rout.be/free/@{normalized || "handle"}
+                    rout.be/u/@{normalized || "handle"}
                   </span>
                   <button
                     type="button"
@@ -589,7 +589,7 @@ export function ProfileEditor() {
                     type="button"
                     onClick={() => {
                       void navigator.clipboard.writeText(
-                        `https://rout.be/free/@${normalized || "handle"}`,
+                        `https://rout.be/u/@${normalized || "handle"}`,
                       );
                       toast.success("Link copied!");
                     }}
@@ -1033,7 +1033,7 @@ export function ProfileEditor() {
                 <div className="mt-3 flex min-w-0 items-center gap-2">
                   <span className="shrink-0 font-mono text-sm text-muted-foreground">
                     {host}
-                    {verified ? "/@" : "/free/@"}
+                    {verified ? "/@" : "/u/@"}
                   </span>
                   <Input
                     value={handle}

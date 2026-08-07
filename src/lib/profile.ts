@@ -166,7 +166,7 @@ export const isReservedHandle = (h: string) => RESERVED_HANDLES.includes(h);
 
 /** Public path for a profile: paid namespace when verified, /free/@ otherwise. */
 export const profilePath = (username: string, verified?: boolean) =>
-  verified ? `/@${username}` : `/free/@${username}`;
+  verified ? `/@${username}` : `/u/@${username}`;
 
 /** Block catalogue used by the “+ Add block” drawer, grouped in folders. */
 export const BLOCK_KINDS: {

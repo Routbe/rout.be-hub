@@ -139,7 +139,7 @@ export function VerificationPanel() {
       <p className="text-xs text-muted-foreground">
         Verified profiles live at{" "}
         <strong className="font-mono">rout.be/@{handle || "handle"}</strong>. Free profiles stay at{" "}
-        <strong className="font-mono">rout.be/free/@{handle || "handle"}</strong>. Verification only
+        <strong className="font-mono">rout.be/u/@{handle || "handle"}</strong>. Verification only
         becomes active once your payment is confirmed.
       </p>
 

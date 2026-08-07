@@ -66,7 +66,7 @@ export function ProfileView({ profile, free = false }: { profile: ProfileRecord;
           </span>
         )}
         <p className="mt-1 text-center text-sm" style={{ color: t.muted }}>
-          {free ? "rout.be/free/@" : "@"}
+          {free ? "rout.be/u/@" : "@"}
           {profile.username}
         </p>
         {aliasEmail && (
