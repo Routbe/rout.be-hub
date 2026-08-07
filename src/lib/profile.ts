@@ -122,6 +122,7 @@ export const RESERVED_HANDLES = [
   "api",
   "auth",
   "free",
+  "u",
   "login",
   "logout",
   "settings",
