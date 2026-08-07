@@ -66,6 +66,9 @@ import {
 import { ProfileView } from "@/components/profile/ProfileView";
 import { VerificationPanel } from "@/components/dashboard/VerificationPanel";
 import { SubdomainPanel } from "@/components/dashboard/SubdomainPanel";
+import { BadgesPanel } from "@/components/dashboard/BadgesPanel";
+import { EmailForwardingPanel } from "@/components/dashboard/EmailForwardingPanel";
+import { BlueskyWizard } from "@/components/dashboard/BlueskyWizard";
 
 type StudioTab = "links" | "design" | "analytics" | "settings";
 
@@ -1072,6 +1075,9 @@ export function ProfileEditor() {
               </section>
               <VerificationPanel />
               <SubdomainPanel />
+              <EmailForwardingPanel />
+              <BlueskyWizard />
+              <BadgesPanel />
             </>
           )}
 
