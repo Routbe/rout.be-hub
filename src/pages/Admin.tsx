@@ -453,30 +453,12 @@ export default function Admin() {
   /** Exports the inbound rows currently loaded in the table. */
   const onExportInbound = () => {
     if (inbound.length === 0) return;
-    const rows = inbound.map((r) => ({
-      "Payment ID": r.eventId,
-      Timestamp: r.receivedAt,
-      Amount: r.amountCents === null ? "" : ((r.amountCents + (r.donationCents ?? 0)) / 100).toFixed(2),
-      Currency: r.amountCents === null ? "" : "EUR",
-      "Parsed Reference": r.reference,
-      "Matched User": r.username ? `@${r.username}` : (r.email ?? ""),
-      Status: r.matched ? (r.status ?? "matched") : "unmatched",
-      "Error Reason": inboundFailureReason(r) ?? "",
-    }));
+    const rows = inboundCsvRows(inbound);
     downloadCsv(
       `rout-inbound-payments-${new Date().toISOString().slice(0, 10)}.csv`,
-      toCsv(rows, [
-        "Payment ID",
-        "Timestamp",
-        "Amount",
-        "Currency",
-        "Parsed Reference",
-        "Matched User",
-        "Status",
-        "Error Reason",
-      ]),
+      toCsv(rows, [...INBOUND_CSV_COLUMNS]),
     );
-    toast.success("Inbound payments exported.");
+    toast.success(`Exported ${rows.length} inbound payment${rows.length === 1 ? "" : "s"}.`);
   };
 
   const refreshAliases = useCallback(
