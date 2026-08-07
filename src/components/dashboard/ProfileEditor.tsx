@@ -486,7 +486,7 @@ export function ProfileEditor() {
   const showSaveBar = tab !== "analytics";
 
   return (
-    <div className="flex flex-1 flex-col space-y-4">
+    <div className={cn("flex flex-1 flex-col space-y-4", showSaveBar && "pb-32")}>
       {/* Namespace banner — crystal clear which tier is active */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
         <span
@@ -1075,9 +1075,6 @@ export function ProfileEditor() {
             </>
           )}
 
-          {showSaveBar && (
-            <p className="pb-2 text-center text-[11px] text-muted-foreground" aria-hidden />
-          )}
         </div>
 
         {/* Live preview — desktop: pinned next to the editor */}
