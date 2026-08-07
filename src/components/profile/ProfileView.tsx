@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BadgeCheck, Mail } from "lucide-react";
 import { blockHref, themeOf, type ProfileRecord } from "@/lib/profile";
 import { SocialPlatformIcon } from "@/lib/social-icons";
+import { BadgeShowcase } from "@/components/profile/BadgeShowcase";
 
 /** Swaps the browser tab icon for the profile's own favicon (or avatar). */
 function useProfileFavicon(url?: string | null) {
@@ -84,6 +85,7 @@ export function ProfileView({ profile, free = false }: { profile: ProfileRecord;
           </p>
         )}
 
+        <BadgeShowcase userId={profile.id} theme={t} />
 
         <div className="mt-8 flex w-full flex-col gap-3">
           {blocks.length === 0 && (
