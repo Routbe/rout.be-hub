@@ -197,7 +197,9 @@
   body,
   #root {
     max-width: 100vw;
-    overflow-x: hidden;
+    /* `clip` (unlike `hidden`) creates no scroll container, so position:sticky
+       descendants — e.g. the Studio live preview — keep working. */
+    overflow-x: clip;
   }
 
   body {

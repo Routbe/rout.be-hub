@@ -2048,9 +2048,10 @@ export function ProfileEditor() {
         </div>
 
         
-        {/* Live preview — desktop: pinned next to the editor, altijd ónder de vaste header (z-10 < z-50) */}
-        <aside className="z-10 hidden self-start lg:sticky lg:top-20 lg:col-span-5 lg:block">
-          <div className="flex flex-col items-center justify-start rounded-3xl border border-border/80 bg-card/40 p-6 shadow-2xl">
+        {/* Live preview — desktop: volledig stationair naast de editor terwijl
+            de formulieren links scrollen (z-10 < vaste header z-50) */}
+        <aside className="z-10 hidden self-start lg:sticky lg:top-4 lg:col-span-5 lg:flex lg:h-[calc(100vh-2rem)] lg:flex-col lg:justify-between lg:py-2">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-start rounded-3xl border border-border/80 bg-card/40 p-6 shadow-2xl">
 
           <div className="mb-4 flex w-full items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -2090,14 +2091,15 @@ export function ProfileEditor() {
 
           <div className="transition-all duration-300 ease-out">
           {previewDevice === "mobile" ? (
-            /* Smartphone: 9:19.5, ronde hoeken, dunne bezel en camera-eiland */
-            <div className="mx-auto w-full max-w-[290px] overflow-hidden rounded-[36px] border border-border/70 bg-foreground/90 p-[10px] shadow-[0_24px_60px_-20px_rgba(0,0,0,0.55)] transition-all duration-300">
+            /* Smartphone: 9:18, ronde hoeken, bezel en camera-eiland; gecentreerd
+               en begrensd op 580px hoog zodat hij in de sticky kolom past */
+            <div className="mx-auto flex max-h-[580px] w-full max-w-[290px] flex-1 items-stretch overflow-hidden rounded-[36px] border-[6px] border-zinc-800 bg-black shadow-2xl transition-all duration-300">
               <div className="relative w-full overflow-hidden rounded-[28px] bg-background">
-                <span className="absolute left-1/2 top-2 z-10 flex h-3 w-20 -translate-x-1/2 items-center justify-center gap-1 rounded-full bg-foreground/80">
+                <span className="absolute left-1/2 top-2 z-10 flex h-3 w-20 -translate-x-1/2 items-center justify-center gap-1 rounded-full bg-zinc-800">
                   <span className="h-1 w-8 rounded-full bg-background/25" />
                   <span className="h-1.5 w-1.5 rounded-full bg-background/35" />
                 </span>
-                <div className="preview-noscroll aspect-[9/19.5] w-full overflow-y-auto overflow-x-hidden text-foreground">
+                <div className="preview-noscroll aspect-[9/18] max-h-[560px] w-full overflow-y-auto overflow-x-hidden text-foreground">
                   <ProfileView profile={previewDraft} free={!verified} />
                 </div>
               </div>
