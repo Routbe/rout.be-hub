@@ -1,6 +1,6 @@
 /**
  * Uniform handling for endpoints that depend on backend secrets
- * (SUPABASE_SERVICE_ROLE_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, CRON_SECRET).
+ * (DATABASE_URL, BREVO_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, CRON_SECRET).
  *
  * A missing secret must never crash a route or freeze the UI — every caller
  * receives the same structured payload so the client can degrade to a
@@ -29,7 +29,7 @@ export function missingSecrets(names: readonly string[]): string[] {
 export function isMissingSecretError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return (
-    message.includes("Missing Supabase environment variable") ||
+    message.includes("Missing Postgres environment variable") ||
     message.includes("not_configured") ||
     message.includes(MISSING_SECRET_CODE)
   );

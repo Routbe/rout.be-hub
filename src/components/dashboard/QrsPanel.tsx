@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@/lib/router-compat";
-import { supabase } from "@/integrations/supabase/client";
+import { db } from "@/lib/db/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,12 +27,24 @@ import {
   MoreHorizontal,
   Copy,
   Link2,
+  Pencil,
   QrCode,
   Wifi,
   Contact,
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { updateShortLinkTarget } from "@/lib/short-link-edit.functions";
+import { formatDateTime } from "@/lib/format";
 
 interface SavedQR {
   id: string;
@@ -49,6 +61,7 @@ interface TrackedRow {
   target_url: string;
   target_type: string;
   created_at: string;
+  updated_at?: string | null;
   scan_count?: number;
 }
 
@@ -62,6 +75,8 @@ type Item = {
   scans: number;
   statsTo?: string;
   shortUrl?: string;
+  targetUrl?: string;
+  updatedAt?: string | null;
 };
 
 type TabKey = "all" | "tracked" | "static" | "archived";
@@ -94,8 +109,8 @@ export function QrsPanel() {
     (async () => {
       setLoading(true);
       const [{ data: s }, { data: t }] = await Promise.all([
-        supabase.from("saved_qrs").select("*").order("created_at", { ascending: false }),
-        supabase
+        db.from("saved_qrs").select("*").order("created_at", { ascending: false }),
+        db
           .from("tracked_qrs")
           .select("*")
           .eq("user_id", user.id)
@@ -104,7 +119,7 @@ export function QrsPanel() {
       const trackedRows = (t ?? []) as TrackedRow[];
       if (trackedRows.length) {
         const ids = trackedRows.map((r) => r.id);
-        const { data: scans } = await supabase
+        const { data: scans } = await db
           .from("qr_scans")
           .select("tracked_qr_id")
           .in("tracked_qr_id", ids);
@@ -131,7 +146,9 @@ export function QrsPanel() {
         created_at: t.created_at,
         scans: t.scan_count ?? 0,
         statsTo: `/stats/${t.dashboard_token}`,
-        shortUrl: `${origin}/r/${t.slug}`,
+        targetUrl: t.target_url,
+        updatedAt: t.updated_at ?? t.created_at,
+        shortUrl: `${origin}/s/${t.slug}`,
       })),
       ...saved.map((s) => ({
         id: s.id,
@@ -151,17 +168,61 @@ export function QrsPanel() {
         (i) => !q || i.title.toLowerCase().includes(q) || i.subtitle.toLowerCase().includes(q),
       );
 
+    // `created_at` kan een string, Date of null zijn (afhankelijk van de bron),
+    // dus altijd normaliseren naar een timestamp voordat we sorteren.
+    const time = (value: unknown) => {
+      if (value instanceof Date) return value.getTime();
+      const parsed = value ? new Date(String(value)).getTime() : NaN;
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
     return filtered.sort((a, b) => {
       if (sort === "scans") return b.scans - a.scans;
-      if (sort === "alpha") return a.title.localeCompare(b.title);
-      return b.created_at.localeCompare(a.created_at);
+      if (sort === "alpha") return String(a.title).localeCompare(String(b.title));
+      return time(b.created_at) - time(a.created_at);
     });
+
   }, [saved, tracked, tab, query, sort]);
+
+  // Bewerk bestemming: de short link / QR blijft ongewijzigd, alleen de
+  // doel-URL waarnaar hij doorstuurt wordt bijgewerkt.
+  const [editing, setEditing] = useState<Item | null>(null);
+  const [editUrl, setEditUrl] = useState("");
+  const [savingUrl, setSavingUrl] = useState(false);
+
+  const openEdit = (item: Item) => {
+    setEditing(item);
+    setEditUrl(item.targetUrl ?? "");
+  };
+
+  const saveTarget = async () => {
+    if (!editing) return;
+    const url = editUrl.trim();
+    if (!/^https:\/\/\S+$/i.test(url)) {
+      toast.error("Voer een geldige URL in die begint met https://");
+      return;
+    }
+    setSavingUrl(true);
+    try {
+      const result = await updateShortLinkTarget({ data: { id: editing.id, targetUrl: url } });
+      setTracked((rows) =>
+        rows.map((r) =>
+          r.id === editing.id ? { ...r, target_url: url, updated_at: result.updated_at } : r,
+        ),
+      );
+      toast.success("Bestemming bijgewerkt — de QR-code en short link blijven gelijk");
+      setEditing(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bijwerken is niet gelukt.");
+    } finally {
+      setSavingUrl(false);
+    }
+  };
 
   const del = async (item: Item) => {
     if (!confirm("Delete this QR?")) return;
     const table = item.kind === "static" ? "saved_qrs" : "tracked_qrs";
-    const { error } = await supabase.from(table).delete().eq("id", item.id);
+    const { error } = await db.from(table).delete().eq("id", item.id);
     if (error) return toast.error(error.message);
     if (item.kind === "static") setSaved((rows) => rows.filter((r) => r.id !== item.id));
     else setTracked((rows) => rows.filter((r) => r.id !== item.id));
@@ -298,6 +359,11 @@ export function QrsPanel() {
                       <Copy className="h-4 w-4" /> Copy short link
                     </DropdownMenuItem>
                   ) : null}
+                  {item.kind === "tracked" ? (
+                    <DropdownMenuItem className="gap-2" onClick={() => openEdit(item)}>
+                      <Pencil className="h-4 w-4" /> Bewerk bestemming
+                    </DropdownMenuItem>
+                  ) : null}
                   {item.statsTo ? (
                     <DropdownMenuItem asChild className="gap-2">
                       <Link to={item.statsTo}>
@@ -319,6 +385,49 @@ export function QrsPanel() {
           ))
         )}
       </div>
+
+      <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Bestemming bewerken</DialogTitle>
+            <DialogDescription>
+              De QR-code en short link blijven exact hetzelfde — alleen de pagina waarnaar ze
+              doorsturen verandert.
+            </DialogDescription>
+          </DialogHeader>
+          {editing?.shortUrl ? (
+            <p className="truncate rounded-xl border border-border bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground">
+              {editing.shortUrl}
+            </p>
+          ) : null}
+          {editing?.updatedAt ? (
+            <p className="text-xs text-muted-foreground">
+              Laatst bijgewerkt: {formatDateTime(editing.updatedAt, "nl")}
+            </p>
+          ) : null}
+          <div className="space-y-1.5">
+            <Label htmlFor="qr-target-url" className="text-xs font-semibold">
+              Doel-URL
+            </Label>
+            <Input
+              id="qr-target-url"
+              value={editUrl}
+              onChange={(e) => setEditUrl(e.target.value)}
+              placeholder="https://voorbeeld.be/pagina"
+              inputMode="url"
+              autoComplete="off"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              Annuleren
+            </Button>
+            <Button onClick={() => void saveTarget()} disabled={savingUrl}>
+              {savingUrl ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Opslaan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

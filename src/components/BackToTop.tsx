@@ -36,10 +36,10 @@ export function BackToTop() {
       data-testid="back-to-top"
       onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
       className={cn(
-        "fixed bottom-24 right-4 z-30 sm:bottom-6 sm:right-6",
+        "fixed bottom-6 right-6 z-50",
         "flex h-11 w-11 items-center justify-center rounded-full",
-        "border border-border/40 bg-background/80 shadow-sm backdrop-blur",
-        "text-muted-foreground transition-colors hover:text-foreground",
+        "border border-border/40 bg-foreground/80 shadow-lg backdrop-blur",
+        "text-background transition-opacity hover:opacity-90",
       )}
     >
       <ArrowUp className="h-4 w-4" aria-hidden />

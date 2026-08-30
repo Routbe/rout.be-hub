@@ -1,20 +1,15 @@
-import eyouSvg from "@/assets/brand/eyou.svg?raw";
-import mastodonSvg from "@/assets/brand/mastodon.svg?raw";
-import keycloakSvg from "@/assets/brand/keycloak.svg?raw";
+import { BRAND_MARK_URLS } from "@/lib/site";
 
 /**
- * Third-party brand marks, bundled at build time and inlined as data URIs.
+ * Third-party brand marks, consumed as CSS mask images so the shape inherits
+ * `currentColor`.
  *
- * These are consumed as CSS mask images, so the shape inherits `currentColor`
- * and the original brand colour is discarded. Inlining (instead of hot-linking
- * the vendor URL) guarantees there is no unstyled flash or missing icon on slow
- * or offline connections — the mask ships inside the CSS-in-JS style value.
+ * These are NEVER imported through Vite — bundled asset imports get rewritten
+ * to a temporary preview host, which breaks production URLs. Every mark
+ * resolves to a hardcoded absolute production URL defined in `@/lib/site`.
  */
-const toDataUri = (svg: string) =>
-  `data:image/svg+xml;utf8,${encodeURIComponent(svg.replace(/\s+/g, " ").trim())}`;
-
 export const BRAND_MARKS = {
-  eyou: toDataUri(eyouSvg),
-  mastodon: toDataUri(mastodonSvg),
-  keycloak: toDataUri(keycloakSvg),
+  eyou: BRAND_MARK_URLS.eyou,
+  mastodon: BRAND_MARK_URLS.mastodon,
+  keycloak: BRAND_MARK_URLS.keycloak,
 } as const;

@@ -1,8 +1,14 @@
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Copy, Check, RefreshCw, Loader2, ChevronDown, X } from "lucide-react";
+import { captionHref, captionSvg, prettyCaption, truncateCaption } from "@/lib/qr-caption";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import { DebugMeshOverlay, DEBUG_ZONE_LEGEND } from "./DebugMeshOverlay";
 import { cn } from "@/lib/utils";
 import { buildExportFilename } from "@/lib/export-filename";
 import { FrameStyle } from "./QRStyleTabs";
@@ -207,6 +213,9 @@ interface QRPreviewProps {
   printMm?: number;
   /** Raises the contrast to a safe pair (used by the export preflight). */
   onAutoFixContrast?: () => void;
+  /** Print the short link as readable text under the code (preview + export). */
+  captionEnabled?: boolean;
+  captionText?: string;
 }
 
 const frameStyleClasses: Record<FrameStyle, string> = {
@@ -310,11 +319,11 @@ export function QRPreview({
   onRichFieldChange,
   printMm,
   onAutoFixContrast,
+  captionEnabled = false,
+  captionText = "",
 }: QRPreviewProps) {
   const qrRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  // Dev-only visual QA: colour-codes finder / timing / data zones on the preview.
-  const [debugMesh, setDebugMesh] = useState(false);
   const qrCodeRef = useRef<QRCodeStyling | null>(null);
   const [copied, setCopied] = useState(false);
   const [qrSize, setQrSize] = useState(220);
@@ -405,6 +414,13 @@ export function QRPreview({
       return null;
     }
   }, [artisticStyle, matrix.bits, fgColor, resolvedOuter, resolvedInner]);
+
+  // Caption: only meaningful without a frame (frames carry their own CTA).
+  const captionValue = prettyCaption(captionText);
+  // What actually gets printed: shortened in the middle when it is too long.
+  const captionDisplay = truncateCaption(captionValue);
+  const captionLink = captionHref(captionValue);
+  const showCaption = captionEnabled && captionValue.length > 0 && !frameId;
 
   const activeFrame = findFrame(frameId);
   const effectiveBgForFrame = bgColor === "transparent" ? "#FFFFFF" : bgColor;
@@ -732,6 +748,29 @@ export function QRPreview({
             })
           : null;
 
+      if (artisticExport && !activeFrame && showCaption) {
+        // Artistic renderer + caption band, still one composed document.
+        const composed = captionSvg({
+          qrHref: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(artisticExport)))}`,
+          size: exportSize,
+          text: captionDisplay,
+          color: fgColor,
+          bg: bgColor || "#FFFFFF",
+          fontFamily: frameFontStack(frameFont) ?? undefined,
+        });
+        if (isVector) {
+          triggerBlob(new Blob([composed.svg], { type: "image/svg+xml" }), "svg");
+        } else {
+          triggerBlob(await rasterise(composed.svg, composed.width, composed.height), resolvedFormat);
+        }
+        toast({
+          title: "Downloaded!",
+          description: `QR met short link opgeslagen als ${resolvedFormat.toUpperCase()}.`,
+        });
+        succeeded = true;
+        return;
+      }
+
       if (artisticExport && !activeFrame) {
         exportedNodes = countSvgNodes(artisticExport);
         if (isVector) {
@@ -768,6 +807,41 @@ export function QRPreview({
         image: logo || undefined,
         qrOptions: { errorCorrectionLevel: "H" },
       });
+
+      if (!activeFrame && showCaption) {
+        // Composite the QR and the caption band into a single artefact so the
+        // download matches the preview 1:1.
+        const rawQr = (await qrOnly.getRawData(isVector ? "svg" : "png")) as Blob | null;
+        if (!rawQr) throw new Error("QR render failed");
+        const qrDataUrl: string = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result as string);
+          r.onerror = rej;
+          r.readAsDataURL(rawQr);
+        });
+        const composed = captionSvg({
+          qrHref: qrDataUrl,
+          size: exportSize,
+          text: captionDisplay,
+          color: fgColor,
+          bg: bgColor || "#FFFFFF",
+          fontFamily: frameFontStack(frameFont) ?? undefined,
+        });
+        if (isVector) {
+          triggerBlob(new Blob([composed.svg], { type: "image/svg+xml" }), "svg");
+        } else {
+          triggerBlob(
+            await rasterise(composed.svg, composed.width, composed.height),
+            resolvedFormat,
+          );
+        }
+        toast({
+          title: "Downloaded!",
+          description: `QR met short link opgeslagen als ${resolvedFormat.toUpperCase()}.`,
+        });
+        succeeded = true;
+        return;
+      }
 
       if (!activeFrame) {
         // qr-code-styling appends the extension itself — hand it the stem only.
@@ -952,6 +1026,8 @@ export function QRPreview({
     frameLabel,
     frameFont,
     frameTweaks,
+    showCaption,
+    captionDisplay,
     artisticStyle,
     matrix.bits,
     qrType,
@@ -1081,6 +1157,9 @@ export function QRPreview({
     }
   }, [toast, displayValue]);
 
+
+
+
   return (
     <div ref={containerRef} className="flex flex-col items-center gap-6 w-full">
       {/* QR Code Display — always rendered on a real white sheet (even in dark
@@ -1168,38 +1247,54 @@ export function QRPreview({
                 dangerouslySetInnerHTML={{ __html: artisticPreview }}
               />
             )}
-            {debugMesh && <DebugMeshOverlay bits={matrix.bits} />}
           </div>
         )}
+
+        {/* Readable short link — same text, size and colour as the export.
+            The tooltip trigger is the focusable element itself, so keyboard
+            users get the full URL on focus, not only on hover. */}
+        {showCaption && (
+          <p
+            className="mx-auto mt-3 w-full max-w-full truncate text-center font-medium tracking-wide"
+            style={{
+              color: fgColor,
+              fontSize: Math.max(11, Math.round(qrSize * 0.055)),
+              fontFamily: frameFontStack(frameFont) ?? undefined,
+            }}
+          >
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  {captionLink ? (
+                    <a
+                      href={captionLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open short link ${captionValue}`}
+                      className="rounded-sm text-inherit no-underline outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {captionDisplay}
+                    </a>
+                  ) : (
+                    <span tabIndex={0} aria-label={captionValue} className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {captionDisplay}
+                    </span>
+                  )}
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[18rem] break-all text-xs">
+                  {captionValue}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </p>
+        )}
+
+
       </div>
 
-      {import.meta.env.DEV && (
-        <div className="flex w-full flex-wrap items-center gap-3 rounded-2xl border border-dashed border-border px-3 py-2">
-          <button
-            type="button"
-            data-testid="debug-mesh-toggle"
-            aria-pressed={debugMesh}
-            onClick={() => setDebugMesh((v) => !v)}
-            className="inline-flex min-h-9 items-center rounded-full border border-border px-3 text-[11px] font-medium text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            Debug render mesh
-          </button>
-          {debugMesh &&
-            DEBUG_ZONE_LEGEND.map((zone) => (
-              <span
-                key={zone.label}
-                className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
-              >
-                <span
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: zone.color }}
-                  aria-hidden
-                />
-                {zone.label}
-              </span>
-            ))}
-        </div>
-      )}
+
+
+
 
       {/* Live scan-safety readout */}
       <ScanSafety

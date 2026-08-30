@@ -1,9 +1,12 @@
 /**
- * DNS lookups for custom-domain verification.
+ * Neon-backed data access + DNS lookups for custom-domain verification.
  *
- * Runs on the edge runtime, so we use Cloudflare's DNS-over-HTTPS resolver
- * instead of node:dns (which is not available there).
+ * DNS lookups run on the edge runtime, so we use Cloudflare's DNS-over-HTTPS
+ * resolver instead of node:dns (which is not available there).
  */
+import { sql } from "@/lib/neon";
+
+type Row = Record<string, unknown>;
 
 const DOH = "https://cloudflare-dns.com/dns-query";
 
@@ -55,4 +58,93 @@ export async function checkDomainDns(
     txtRecords: txt,
     targetRecords,
   };
+}
+
+export async function insertCustomDomain(userId: string, domain: string) {
+  const token = `rout-verify-${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  try {
+    const rows = (await sql`
+      insert into public.custom_domains (user_id, domain, verification_token)
+      values (${userId}, ${domain}, ${token})
+      returning *
+    `) as Row[];
+    return rows[0];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/duplicate key|unique/i.test(message)) {
+      throw new Error("That domain is already connected.");
+    }
+    throw new Error(message);
+  }
+}
+
+export async function getOwnedDomain(id: string, userId: string): Promise<Row | null> {
+  const rows = (await sql`
+    select * from public.custom_domains where id = ${id} and user_id = ${userId} limit 1
+  `) as Row[];
+  return rows[0] ?? null;
+}
+
+export async function updateDomainStatus(id: string, status: string, verified: boolean) {
+  const verifiedAt = verified ? new Date().toISOString() : null;
+  await sql`
+    update public.custom_domains
+       set status = ${status},
+           last_checked_at = now(),
+           verified_at = ${verifiedAt},
+           updated_at = now()
+     where id = ${id}
+  `;
+}
+
+export async function setDefaultDomainFor(userId: string, id: string) {
+  await sql`update public.custom_domains set is_default = false where user_id = ${userId}`;
+  await sql`
+    update public.custom_domains
+       set is_default = true, updated_at = now()
+     where id = ${id} and user_id = ${userId}
+  `;
+}
+
+export async function setDomainShortLinksFor(userId: string, id: string, enabled: boolean) {
+  await sql`
+    update public.custom_domains
+       set short_links_enabled = ${enabled}, updated_at = now()
+     where id = ${id} and user_id = ${userId}
+  `;
+}
+
+export async function deleteDomainFor(userId: string, id: string) {
+  await sql`delete from public.custom_domains where id = ${id} and user_id = ${userId}`;
+}
+
+export async function listDomainsFor(userId: string) {
+  return (await sql`
+    select * from public.custom_domains
+     where user_id = ${userId}
+     order by created_at desc
+  `) as Row[];
+}
+
+/**
+ * Reverse lookup for CNAME hosting: which handle should a request host render?
+ *
+ * Only verified domains resolve, so an unverified (or removed) domain can
+ * never hijack a profile. Returns null for our own hosts and unknown domains.
+ */
+export async function findHandleForHost(host: string): Promise<string | null> {
+  const clean = host.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
+  if (!clean || /(^|\.)(rout\.be|rout\.app|lovable\.app|localhost)$/.test(clean)) return null;
+
+  const rows = (await sql`
+    select p.username
+      from public.custom_domains d
+      join public.profiles p on p.id = d.user_id
+     where d.domain = ${clean}
+       and d.status = 'verified'
+     limit 1
+  `) as Row[];
+
+  const username = rows[0]?.["username"];
+  return typeof username === "string" && username ? username : null;
 }

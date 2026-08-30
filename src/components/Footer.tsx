@@ -82,7 +82,10 @@ export function Footer() {
     <footer className="mt-auto border-t border-border bg-background">
       <div className="container mx-auto px-4 py-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:py-12">
         <div className="min-w-0 space-y-3">
-          <RoutLogo size={24} />
+          {/* Altijd naar de root van de huidige omgeving — nooit een preview-host. */}
+          <Link to="/" aria-label="ROUT home" className="inline-flex">
+            <RoutLogo size={24} />
+          </Link>
           <p className="max-w-xs text-sm text-muted-foreground">{t("footer.tagline")}</p>
           <div
             data-testid="footer-socials"
@@ -175,12 +178,12 @@ export function Footer() {
             <p>
               Designed &amp; engineered by{" "}
               <a
-                href="https://delplanche.com"
+                href="https://delplanche.cloud"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-foreground underline underline-offset-4"
               >
-                Delplanche
+                delplanche.cloud
               </a>
             </p>
           </div>

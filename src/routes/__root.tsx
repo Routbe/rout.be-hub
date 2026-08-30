@@ -1,4 +1,3 @@
-import "@/lib/env";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -10,17 +9,17 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
-import "../styles.css";
+import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { I18nProvider } from "@/lib/i18n";
-
 import { AuthProvider } from "@/hooks/useAuth";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useAppRecovery } from "@/hooks/useAppRecovery";
+import { LanguageSync } from "@/components/LanguageSync";
+import "@/lib/env";
 
 function NotFoundComponent() {
   return (
@@ -87,22 +86,57 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "ROUT — QR Code Studio" },
+      { title: "ROUT — QR-codes en korte links met karakter" },
       {
         name: "description",
-        content: "Ontwerp print-klare QR-codes met eigen stijl, frames en scananalytics.",
+        content:
+          "Ontwerp stijlvolle QR-codes en trackbare korte links. Privacyvriendelijk en in eigen beheer.",
       },
       { name: "author", content: "ROUT" },
-      { property: "og:title", content: "ROUT — QR Code Studio" },
+      { property: "og:title", content: "ROUT — QR-codes en korte links met karakter" },
       {
         property: "og:description",
-        content: "Ontwerp print-klare QR-codes met eigen stijl, frames en scananalytics.",
+        content:
+          "Ontwerp stijlvolle QR-codes en trackbare korte links. Privacyvriendelijk en in eigen beheer.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:image", content: "https://rout.be/og-banner.jpg" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      {
+        property: "og:image:alt",
+        content: "ROUT — QR codes en korte links met karakter",
+      },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:image", content: "https://rout.be/og-banner.jpg" },
+      // Statusbalk van de browser volgt de huisstijl, licht én donker.
+      { name: "theme-color", content: "#FBF9F5", media: "(prefers-color-scheme: light)" },
+      { name: "theme-color", content: "#131211", media: "(prefers-color-scheme: dark)" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "ROUT" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "application-name", content: "ROUT" },
     ],
-    links: [{ rel: "icon", href: "/favicon.ico", type: "image/x-icon" }],
+    links: [
+      {
+        rel: "stylesheet",
+        href: appCss,
+      },
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;600&family=Lora:wght@400;600&family=Playfair+Display:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;800&family=Space+Grotesk:wght@500;700&display=swap",
+      },
+      { rel: "manifest", href: "/manifest.json" },
+      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+      { rel: "icon", href: "/favicon.png", type: "image/png" },
+      { rel: "icon", href: "/icon-192.png", type: "image/png", sizes: "192x192" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
+    ],
   }),
+
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
@@ -125,9 +159,16 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  const generation = useAppRecovery();
+
+  useEffect(() => {
+    void import("@/lib/pwa").then((m) => m.setupPwa());
+    // `?ref=` op elke entree onthouden (30 dagen), zodat de attributie
+    // overleeft terwijl de bezoeker rondkijkt vóór registratie.
+    void import("@/lib/referral").then((m) => m.captureReferralFromUrl());
+  }, []);
 
   return (
+
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <I18nProvider>
@@ -135,11 +176,10 @@ function RootComponent() {
             <Toaster />
             <Sonner />
             <AuthProvider>
-              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-              <ErrorBoundary resetKey={generation}>
-                <div key={generation} className="contents">
-                  <Outlet />
-                </div>
+              <LanguageSync />
+              <ErrorBoundary>
+                {/* Required: nested routes render here. */}
+                <Outlet />
               </ErrorBoundary>
             </AuthProvider>
           </TooltipProvider>

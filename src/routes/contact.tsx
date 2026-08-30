@@ -1,23 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import Contact from "@/pages/Contact";
+import Page from "@/pages/Contact";
 
 export const Route = createFileRoute("/contact")({
   head: () => ({
     meta: [
-      { title: "Contact & Support — ROUT" },
-      {
-        name: "description",
-        content:
-          "Neem contact op met ROUT: algemene vragen, bugrapporten of custom domains en enterprise-infrastructuur.",
-      },
-      { property: "og:title", content: "Contact & Support — ROUT" },
-      {
-        property: "og:description",
-        content: "Vragen, bugs of samenwerkingen — we lezen elk bericht.",
-      },
+      { title: "Contact | ROUT" },
+      { name: "description", content: "Vragen, feedback of support voor ROUT? Neem hier contact met ons op." },
+      { property: "og:title", content: "Contact | ROUT" },
+      { property: "og:description", content: "Vragen, feedback of support voor ROUT? Neem hier contact met ons op." },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: Contact,
+  component: Page,
 });

@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireAuth } from "@/lib/auth/middleware";
+
+type DomainRow = { [key: string]: string | number | boolean | null };
 
 /** Where a customer's domain must point for links to resolve. */
 export const DOMAIN_CNAME_TARGET = "links.rout.app";
@@ -19,39 +21,31 @@ const domainSchema = z
 
 /** Register a domain and hand back the DNS records the user has to create. */
 export const addCustomDomain = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) => z.object({ domain: domainSchema }).parse(data))
   .handler(async ({ data, context }) => {
-    const token = `rout-verify-${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-    const { data: row, error } = await context.supabase
-      .from("custom_domains")
-      .insert({ user_id: context.userId, domain: data.domain, verification_token: token })
-      .select()
-      .single();
-
-    if (error) {
-      if (error.code === "23505") throw new Error("That domain is already connected.");
-      throw new Error(error.message);
-    }
-    return row;
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { insertCustomDomain } = await import("./domains.server");
+    return (await insertCustomDomain(context.userId, data.domain)) as unknown as DomainRow;
   });
 
 /** Re-check DNS and flip the domain to verified when both records are live. */
 export const verifyCustomDomain = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) => z.object({ id: z.string().uuid() }).parse(data))
   .handler(async ({ data, context }) => {
-    const { data: row, error } = await context.supabase
-      .from("custom_domains")
-      .select("*")
-      .eq("id", data.id)
-      .single();
-    if (error || !row) throw new Error("Domain not found.");
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { getOwnedDomain, updateDomainStatus, checkDomainDns } = await import(
+      "./domains.server"
+    );
+    const row = await getOwnedDomain(data.id, context.userId);
+    if (!row) throw new Error("Domain not found.");
 
-    const { checkDomainDns } = await import("./domains.server");
     const check = await checkDomainDns(
-      row.domain,
-      row.verification_token,
+      row.domain as string,
+      row.verification_token as string,
       DOMAIN_CNAME_TARGET,
       DOMAIN_A_TARGET,
     );
@@ -59,51 +53,57 @@ export const verifyCustomDomain = createServerFn({ method: "POST" })
     const verified = check.txtFound && check.cnameFound;
     const status = verified ? "verified" : check.txtFound ? "pointing" : "pending";
 
-    await context.supabase
-      .from("custom_domains")
-      .update({
-        status,
-        last_checked_at: new Date().toISOString(),
-        verified_at: verified ? new Date().toISOString() : null,
-      })
-      .eq("id", row.id);
+    await updateDomainStatus(row.id as string, status, verified);
 
     return { status, ...check };
   });
 
 /** Exactly one domain can be the default used by new dynamic QRs. */
 export const setDefaultDomain = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) => z.object({ id: z.string().uuid() }).parse(data))
   .handler(async ({ data, context }) => {
-    await context.supabase
-      .from("custom_domains")
-      .update({ is_default: false })
-      .eq("user_id", context.userId);
-    const { error } = await context.supabase
-      .from("custom_domains")
-      .update({ is_default: true })
-      .eq("id", data.id);
-    if (error) throw new Error(error.message);
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { setDefaultDomainFor } = await import("./domains.server");
+    await setDefaultDomainFor(context.userId, data.id);
+    return { ok: true };
+  });
+
+/**
+ * Short links on a branded domain are opt-in per domain. Switching this off
+ * leaves existing links intact — they simply fall back to the ROUT domain, so
+ * a half-configured domain never breaks a printed QR.
+ */
+export const setDomainShortLinks = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((data) =>
+    z.object({ id: z.string().uuid(), enabled: z.boolean() }).parse(data),
+  )
+  .handler(async ({ data, context }) => {
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { setDomainShortLinksFor } = await import("./domains.server");
+    await setDomainShortLinksFor(context.userId, data.id, data.enabled);
     return { ok: true };
   });
 
 export const deleteCustomDomain = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) => z.object({ id: z.string().uuid() }).parse(data))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("custom_domains").delete().eq("id", data.id);
-    if (error) throw new Error(error.message);
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { deleteDomainFor } = await import("./domains.server");
+    await deleteDomainFor(context.userId, data.id);
     return { ok: true };
   });
 
 export const listCustomDomains = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
-      .from("custom_domains")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return data;
+    const { assertEntitled } = await import("./entitlement.server");
+    await assertEntitled(context.userId); // deep-link / direct-RPC protection
+    const { listDomainsFor } = await import("./domains.server");
+    return (await listDomainsFor(context.userId)) as unknown as DomainRow[];
   });

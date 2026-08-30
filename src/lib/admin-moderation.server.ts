@@ -1,3 +1,4 @@
+import type { UserSegment } from "./admin-segments";
 /**
  * Server-only moderation, short-handle allocation, pagination and alias
  * monitoring helpers for the super admin portal.
@@ -8,6 +9,8 @@
 
 import { VIP_HANDLE_GRANT, needsVipGrant, normalizeHandleInput } from "./handle-rules";
 import { writeAudit } from "./admin.server";
+import { selectTolerant } from "./optional-columns";
+
 
 const PERMANENT_BAN = "876000h"; // ~100 years
 
@@ -25,6 +28,8 @@ export type ModeratedUser = {
   isBanned: boolean;
   moderationReason: string | null;
   handleGrant: string | null;
+  /** Gratis/alias-identiteit: rout.be/u/<alias>. */
+  subdomainAlias: string | null;
   aliasStatus: string | null;
   forwardingEmail: string | null;
   blocks: { id?: string; label?: string; value?: string; kind?: string }[];
@@ -36,10 +41,13 @@ export type ModeratedUser = {
   aliasSyncAttempts: number;
   aliasSyncedAt: string | null;
   aliasSyncError: string | null;
+  lastCountry: string | null;
+  lastCity: string | null;
 };
 
 const PROFILE_COLUMNS =
-  "id, display_name, username, tagline, avatar_url, blocks, tier, verified, status, is_suspended, is_banned, moderation_reason, handle_grant, alias_status, forwarding_email, created_at, is_paid, payment_method, is_early_believer, alias_sync_status, alias_sync_attempts, alias_synced_at, alias_sync_error";
+  "id, display_name, username, tagline, avatar_url, blocks, tier, verified, status, is_suspended, is_banned, moderation_reason, handle_grant, alias_status, forwarding_email, created_at, is_paid, payment_method, is_early_believer, alias_sync_status, alias_sync_attempts, alias_synced_at, alias_sync_error, subdomain_alias, last_country, last_city";
+
 
 type ProfileRow = Record<string, unknown>;
 
@@ -58,6 +66,7 @@ function mapProfile(row: ProfileRow, email: string | null): ModeratedUser {
     isBanned: Boolean(row["is_banned"]),
     moderationReason: (row["moderation_reason"] as string | null) ?? null,
     handleGrant: (row["handle_grant"] as string | null) ?? null,
+    subdomainAlias: (row["subdomain_alias"] as string | null) ?? null,
     aliasStatus: (row["alias_status"] as string | null) ?? null,
     forwardingEmail: (row["forwarding_email"] as string | null) ?? null,
     blocks: Array.isArray(row["blocks"]) ? (row["blocks"] as ModeratedUser["blocks"]) : [],
@@ -69,57 +78,114 @@ function mapProfile(row: ProfileRow, email: string | null): ModeratedUser {
     aliasSyncAttempts: Number(row["alias_sync_attempts"] ?? 0),
     aliasSyncedAt: (row["alias_synced_at"] as string | null) ?? null,
     aliasSyncError: (row["alias_sync_error"] as string | null) ?? null,
+    lastCountry: (row["last_country"] as string | null) ?? null,
+    lastCity: (row["last_city"] as string | null) ?? null,
   };
 }
 
+
 async function emailFor(userId: string): Promise<string | null> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data } = await dbAdmin.auth.admin.getUserById(userId);
   return data?.user?.email ?? null;
 }
 
 export type Page<T> = { rows: T[]; total: number; page: number; perPage: number };
 
 /** Server-side paginated user list with optional search on handle / name / id. */
+/** Compact user-list segments, filtered server-side. */
+export { USER_SEGMENTS } from "./admin-segments";
+export type { UserSegment } from "./admin-segments";
+
 export async function listUsersPage(opts: {
   query?: string;
   page?: number;
   perPage?: number;
+  segment?: UserSegment;
 }): Promise<Page<ModeratedUser>> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const page = Math.max(1, opts.page ?? 1);
   const perPage = Math.min(100, Math.max(5, opts.perPage ?? 20));
   const from = (page - 1) * perPage;
 
   const term = (opts.query ?? "").trim().replace(/^@/, "");
   const isUuid = /^[0-9a-f-]{36}$/i.test(term);
+  // "2026", "2026-08" of "2026-08-14" → filter op registratiedatum.
+  const dateMatch = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(term);
 
-  let q = supabaseAdmin
-    .from("profiles")
-    .select(PROFILE_COLUMNS, { count: "exact" })
-    .order("created_at", { ascending: false });
+  const buildQuery = (cols: string) => {
+    let q = dbAdmin
+      .from("profiles")
+      .select(cols, { count: "exact" })
+      .order("created_at", { ascending: false });
 
-  if (term) {
-    if (isUuid) q = q.eq("id", term);
-    else if (term.includes("@")) {
-      // E-mail search: resolve through the auth admin API first.
-      const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
-      const ids = (list?.users ?? [])
-        .filter((u) => u.email?.toLowerCase().includes(term.toLowerCase()))
-        .map((u) => u.id);
-      if (ids.length === 0) return { rows: [], total: 0, page, perPage };
-      q = q.in("id", ids);
-    } else {
-      q = q.or(`username.ilike.%${term}%,display_name.ilike.%${term}%`);
+    switch (opts.segment) {
+      case "free":
+        q = q.eq("tier", "free");
+        break;
+      case "verified_paid":
+        q = q.eq("verified", true).eq("is_paid", true);
+        break;
+      case "alias_unsynced":
+        // NULL counts as "never synced yet", which is also unsynced.
+        q = q.or("alias_sync_status.neq.synced,alias_sync_status.is.null");
+        break;
+      case "suspended_or_banned":
+        q = q.or("is_suspended.eq.true,is_banned.eq.true");
+        break;
+      default:
+        break;
     }
+    return q;
+  };
+
+  let emailIds: string[] | null = null;
+  if (term && term.includes("@")) {
+    // E-mail search: resolve through the auth admin API first.
+    const { data: list } = await dbAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    emailIds = ((list?.users ?? []) as Array<{ id: string; email?: string }>)
+      .filter((u) => u.email?.toLowerCase().includes(term.toLowerCase()))
+      .map((u) => u.id);
+    if (emailIds.length === 0) return { rows: [], total: 0, page, perPage };
   }
 
-  const { data, count } = await q.range(from, from + perPage - 1);
+  const applySearch = (q: ReturnType<typeof buildQuery>) => {
+    if (!term) return q;
+    if (isUuid) return q.eq("id", term);
+    if (emailIds) return q.in("id", emailIds);
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch;
+      const start = new Date(
+        Date.UTC(Number(year), month ? Number(month) - 1 : 0, day ? Number(day) : 1),
+      );
+      const end = new Date(start);
+      if (day) end.setUTCDate(end.getUTCDate() + 1);
+      else if (month) end.setUTCMonth(end.getUTCMonth() + 1);
+      else end.setUTCFullYear(end.getUTCFullYear() + 1);
+      return q.gte("created_at", start.toISOString()).lt("created_at", end.toISOString());
+    }
+    return q.or(
+      `username.ilike.%${term}%,display_name.ilike.%${term}%,subdomain_alias.ilike.%${term}%`,
+    );
+  };
+
+  const { data, count } = await selectTolerant<ProfileRow[]>(
+    PROFILE_COLUMNS,
+    (cols) =>
+      applySearch(buildQuery(cols)).range(from, from + perPage - 1) as PromiseLike<{
+        data: ProfileRow[] | null;
+        error: unknown;
+        count?: number | null;
+      }>,
+    ["last_country", "last_city"],
+  ).then((r) => ({ data: r.data, count: (r as { count?: number | null }).count ?? null }));
+
   const rows: ModeratedUser[] = [];
   for (const row of data ?? []) {
     rows.push(mapProfile(row as ProfileRow, await emailFor(String((row as ProfileRow)["id"]))));
   }
   return { rows, total: count ?? rows.length, page, perPage };
+
 }
 
 /** Suspend / unsuspend: hides the public profile and disables dynamic QR redirects. */
@@ -129,8 +195,8 @@ export async function setSuspension(opts: {
   reason?: string | null;
   adminId: string;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { error } = await supabaseAdmin
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { error } = await dbAdmin
     .from("profiles")
     .update({
       is_suspended: opts.suspended,
@@ -142,7 +208,7 @@ export async function setSuspension(opts: {
     .eq("id", opts.userId);
   if (error) return { ok: false as const, reason: error.message };
 
-  await supabaseAdmin.from("security_events").insert({
+  await dbAdmin.from("security_events").insert({
     user_id: opts.userId,
     kind: opts.suspended ? "profile_suspended" : "profile_reinstated",
     severity: opts.suspended ? "warning" : "info",
@@ -169,14 +235,14 @@ export async function setBan(opts: {
   reason?: string | null;
   adminId: string;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
 
-  const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(opts.userId, {
+  const { error: authError } = await dbAdmin.auth.admin.updateUserById(opts.userId, {
     ban_duration: opts.banned ? PERMANENT_BAN : "none",
   });
   if (authError) return { ok: false as const, reason: authError.message };
 
-  const { error } = await supabaseAdmin
+  const { error } = await dbAdmin
     .from("profiles")
     .update({
       is_banned: opts.banned,
@@ -214,12 +280,14 @@ export async function changeHandle(opts: {
   handle: string;
   vipGrant?: boolean;
   adminId: string;
+  /** Free-text justification, stored verbatim in the audit trail. */
+  reason?: string | null;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const handle = normalizeHandleInput(opts.handle);
   if (!handle) return { ok: false as const, reason: "Handle cannot be empty." };
 
-  const { data: profile } = await supabaseAdmin
+  const { data: profile } = await dbAdmin
     .from("profiles")
     .select("username, verified, handle_grant")
     .eq("id", opts.userId)
@@ -238,7 +306,7 @@ export async function changeHandle(opts: {
     return { ok: false as const, reason: "Short handles can only go to verified accounts." };
   }
 
-  const { data: taken } = await supabaseAdmin
+  const { data: taken } = await dbAdmin
     .from("profiles")
     .select("id")
     .ilike("username", handle)
@@ -248,7 +316,7 @@ export async function changeHandle(opts: {
     return { ok: false as const, reason: "Already taken by another account." };
   }
 
-  const { error } = await supabaseAdmin
+  const { error } = await dbAdmin
     .from("profiles")
     .update({ username: handle, handle_grant: grant })
     .eq("id", opts.userId);
@@ -259,12 +327,20 @@ export async function changeHandle(opts: {
   await drainAliasSyncQueue(5);
   const alias = { ok: true as const, queued: true };
 
-  await supabaseAdmin.from("security_events").insert({
+  const reason = opts.reason?.trim() || null;
+
+  await dbAdmin.from("security_events").insert({
     user_id: opts.userId,
     kind: "handle_changed_by_admin",
     severity: "warning",
     message: `Your handle is now @${handle}.`,
-    details: { previous: profile.username, handle, vip: Boolean(grant), admin_id: opts.adminId },
+    details: {
+      previous: profile.username,
+      handle,
+      vip: Boolean(grant),
+      admin_id: opts.adminId,
+      reason,
+    },
   });
 
   await writeAudit({
@@ -272,10 +348,16 @@ export async function changeHandle(opts: {
     action: grant ? "vip_handle_granted" : "handle_changed",
     targetUserId: opts.userId,
     targetLabel: handle,
-    notes: `from @${profile.username ?? "—"} · alias sync queued`,
+    notes: [
+      `from @${profile.username ?? "—"}`,
+      "alias sync queued",
+      reason ? `reason: ${reason}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   });
 
-  return { ok: true as const, handle, vip: Boolean(grant), alias };
+  return { ok: true as const, handle, vip: Boolean(grant), alias, reason };
 }
 
 /** Content cleansing: wipe the bio, reset the avatar or drop individual links. */
@@ -286,8 +368,8 @@ export async function cleanseContent(opts: {
   removeBlockIndexes?: number[];
   adminId: string;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data: profile } = await supabaseAdmin
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data: profile } = await dbAdmin
     .from("profiles")
     .select("blocks")
     .eq("id", opts.userId)
@@ -313,7 +395,7 @@ export async function cleanseContent(opts: {
   }
   if (Object.keys(patch).length === 0) return { ok: true as const };
 
-  const { error } = await supabaseAdmin
+  const { error } = await dbAdmin
     .from("profiles")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .update(patch as any)
@@ -350,6 +432,8 @@ export type AuditPageFilters = {
   action?: string;
   from?: string;
   to?: string;
+  /** Free-text search across action, admin, target and notes (server-side). */
+  search?: string;
 };
 
 /** Range-based (server-side) pagination for the audit log. */
@@ -358,12 +442,12 @@ export async function fetchAuditPage(
   page = 1,
   perPage = 20,
 ): Promise<Page<AuditRow>> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const safePage = Math.max(1, page);
   const safePerPage = Math.min(100, Math.max(10, perPage));
   const from = (safePage - 1) * safePerPage;
 
-  let q = supabaseAdmin
+  let q = dbAdmin
     .from("admin_audit_log")
     .select("id, admin_email, action, target_user_id, target_label, notes, created_at", {
       count: "exact",
@@ -371,6 +455,20 @@ export async function fetchAuditPage(
     .order("created_at", { ascending: false });
 
   if (filters.adminEmail) q = q.ilike("admin_email", `%${filters.adminEmail}%`);
+  if (filters.search) {
+    // Escape PostgREST's or() separators so a comma in the term cannot inject filters.
+    const term = filters.search.replace(/[,()]/g, " ").trim();
+    if (term) {
+      q = q.or(
+        [
+          `action.ilike.%${term}%`,
+          `admin_email.ilike.%${term}%`,
+          `target_label.ilike.%${term}%`,
+          `notes.ilike.%${term}%`,
+        ].join(","),
+      );
+    }
+  }
   if (filters.action) q = q.eq("action", filters.action);
   if (filters.from) q = q.gte("created_at", new Date(filters.from).toISOString());
   if (filters.to) {
@@ -398,8 +496,8 @@ export async function fetchAuditPage(
 
 /** Distinct action names, for the audit filter dropdown. */
 export async function listAuditActions(): Promise<string[]> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data } = await supabaseAdmin
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data } = await dbAdmin
     .from("admin_audit_log")
     .select("action")
     .order("created_at", { ascending: false })
@@ -423,7 +521,7 @@ export type AliasRow = {
 
 /** ImprovMX monitoring: local alias state joined with the remote health probe. */
 export async function fetchNetworkOverview(page = 1, perPage = 20) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const { aliasHealth } = await import("./alias.server");
   const { drainAliasSyncQueue, aliasQueueSummary } = await import("./alias-sync.server");
   const safePage = Math.max(1, page);
@@ -433,7 +531,7 @@ export async function fetchNetworkOverview(page = 1, perPage = 20) {
   // Opening the tab also nudges the queue forward — retries never stall.
   await drainAliasSyncQueue(5);
 
-  const { data, count } = await supabaseAdmin
+  const { data, count } = await dbAdmin
     .from("profiles")
     .select(
       "id, username, alias_status, forwarding_email, verified, is_banned, alias_sync_status, alias_sync_attempts, alias_synced_at, alias_sync_error",
@@ -470,19 +568,19 @@ export async function controlAlias(opts: {
   action: "pause" | "resume" | "delete";
   adminId: string;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const { enqueueAliasJob, drainAliasSyncQueue } = await import("./alias-sync.server");
 
   let payload: Record<string, unknown> = {};
   if (opts.action === "pause") {
-    const { data } = await supabaseAdmin
+    const { data } = await dbAdmin
       .from("profiles")
       .select("username")
       .eq("id", opts.userId)
       .maybeSingle();
     if (!data?.username) return { ok: false as const, reason: "This account has no handle." };
     payload = { username: data.username };
-    await supabaseAdmin.from("profiles").update({ alias_status: "paused" }).eq("id", opts.userId);
+    await dbAdmin.from("profiles").update({ alias_status: "paused" }).eq("id", opts.userId);
   }
 
   await enqueueAliasJob(opts.userId, opts.action, payload);
@@ -508,8 +606,8 @@ export async function markUserPaid(opts: {
   adminId: string;
   note?: string | null;
 }) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { error } = await supabaseAdmin
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { error } = await dbAdmin
     .from("profiles")
     .update({
       is_paid: opts.paid,
@@ -526,7 +624,7 @@ export async function markUserPaid(opts: {
   await enqueueAliasJob(opts.userId, opts.paid ? "provision" : "delete");
   const sync = await drainAliasSyncQueue(5);
 
-  await supabaseAdmin.from("security_events").insert({
+  await dbAdmin.from("security_events").insert({
     user_id: opts.userId,
     kind: opts.paid ? "manual_payment_verified" : "manual_payment_revoked",
     severity: "info",
@@ -617,12 +715,12 @@ export async function fetchTransactionsPage(opts: {
   page?: number;
   perPage?: number;
 }): Promise<Page<TransactionRow>> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const page = Math.max(1, opts.page ?? 1);
   const perPage = Math.min(200, Math.max(10, opts.perPage ?? 20));
   const from = (page - 1) * perPage;
 
-  let q = supabaseAdmin
+  let q = dbAdmin
     .from("verification_payments")
     .select(
       "id, user_id, tier, amount_cents, donation_cents, provider, reference_code, status, created_at",
@@ -635,7 +733,7 @@ export async function fetchTransactionsPage(opts: {
   const rows = data ?? [];
   const ids = [...new Set(rows.map((r) => r.user_id))];
 
-  const { data: profiles } = await supabaseAdmin
+  const { data: profiles } = await dbAdmin
     .from("profiles")
     .select("id, username")
     .in("id", ids.length > 0 ? ids : ["00000000-0000-0000-0000-000000000000"]);
@@ -715,10 +813,10 @@ export type InboundPaymentRow = {
  * up again against current accounts and activates it when it now resolves.
  */
 export async function reprocessInboundPayment(eventId: string, adminId: string) {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const reference = eventId.replace(/^inbound:/, "").toUpperCase();
 
-  const { data: payment } = await supabaseAdmin
+  const { data: payment } = await dbAdmin
     .from("verification_payments")
     .select("id, user_id, tier, status")
     .eq("reference_code", reference)
@@ -733,12 +831,12 @@ export async function reprocessInboundPayment(eventId: string, adminId: string) 
     return { ok: true as const, matched: true, reference, reason: "already_active" };
   }
 
-  await supabaseAdmin
+  await dbAdmin
     .from("verification_payments")
     .update({ status: "paid", provider_ref: reference })
     .eq("id", payment.id);
 
-  await supabaseAdmin
+  await dbAdmin
     .from("profiles")
     .update({
       is_paid: true,
@@ -776,12 +874,12 @@ export async function fetchInboundPayments(
   page = 1,
   perPage = 20,
 ): Promise<Page<InboundPaymentRow>> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { dbAdmin } = await import("@/lib/db/admin.server");
   const safePage = Math.max(1, page);
   const safePerPage = Math.min(100, Math.max(10, perPage));
   const from = (safePage - 1) * safePerPage;
 
-  const { data, count } = await supabaseAdmin
+  const { data, count } = await dbAdmin
     .from("webhook_events")
     .select("id, source, kind, created_at", { count: "exact" })
     .eq("kind", "payment_email")
@@ -791,7 +889,7 @@ export async function fetchInboundPayments(
   const events = data ?? [];
   const references = events.map((e) => e.id.replace(/^inbound:/, ""));
 
-  const { data: payments } = await supabaseAdmin
+  const { data: payments } = await dbAdmin
     .from("verification_payments")
     .select("user_id, reference_code, status, amount_cents, donation_cents")
     .in("reference_code", references.length > 0 ? references : ["__none__"]);
@@ -799,7 +897,7 @@ export async function fetchInboundPayments(
   const byReference = new Map((payments ?? []).map((p) => [p.reference_code ?? "", p]));
 
   const userIds = [...new Set((payments ?? []).map((p) => p.user_id))];
-  const { data: profiles } = await supabaseAdmin
+  const { data: profiles } = await dbAdmin
     .from("profiles")
     .select("id, username")
     .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]);
@@ -826,4 +924,563 @@ export async function fetchInboundPayments(
   });
 
   return { rows, total: count ?? rows.length, page: safePage, perPage: safePerPage };
+}
+
+/** Server-side CSV export of inbound bank references (admin-only, all rows). */
+export async function exportInboundPayments(filters: {
+  matched?: boolean;
+  status?: "paid" | "pending" | "failed";
+} = {}) {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { INBOUND_CSV_COLUMNS, inboundCsvRows } = await import("./payments");
+  const { toCsv } = await import("./csv");
+
+  let q = dbAdmin
+    .from("webhook_events")
+    .select("id, source, kind, created_at")
+    .eq("kind", "payment_email")
+    .order("created_at", { ascending: false })
+    .limit(5000);
+
+  const { data: events } = await q;
+  const allEvents = events ?? [];
+  const references = allEvents.map((e) => e.id.replace(/^inbound:/, ""));
+
+  const { data: payments } = await dbAdmin
+    .from("verification_payments")
+    .select("user_id, reference_code, status, amount_cents, donation_cents")
+    .in("reference_code", references.length > 0 ? references : ["__none__"]);
+
+  const byReference = new Map((payments ?? []).map((p) => [p.reference_code ?? "", p]));
+
+  const userIds = [...new Set((payments ?? []).map((p) => p.user_id))];
+  const { data: profiles } = await dbAdmin
+    .from("profiles")
+    .select("id, username")
+    .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]);
+  const handleById = new Map((profiles ?? []).map((p) => [p.id, p.username as string | null]));
+
+  const emails = new Map<string, string | null>();
+  for (const id of userIds) emails.set(id, await emailFor(id));
+
+  let rows: InboundPaymentRow[] = allEvents.map((e) => {
+    const reference = e.id.replace(/^inbound:/, "");
+    const payment = byReference.get(reference);
+    return {
+      eventId: e.id,
+      reference,
+      receivedAt: e.created_at,
+      matched: Boolean(payment),
+      status: payment?.status ?? null,
+      amountCents: payment?.amount_cents ?? null,
+      donationCents: payment?.donation_cents ?? null,
+      userId: payment?.user_id ?? null,
+      username: payment ? (handleById.get(payment.user_id) ?? null) : null,
+      email: payment ? (emails.get(payment.user_id) ?? null) : null,
+    };
+  });
+
+  if (typeof filters.matched === "boolean") {
+    rows = rows.filter((r) => r.matched === filters.matched);
+  }
+  if (filters.status) {
+    rows = rows.filter((r) => r.status === filters.status);
+  }
+
+  return {
+    csv: toCsv(inboundCsvRows(rows), [...INBOUND_CSV_COLUMNS]),
+    filename: `rout-inbound-payments-${new Date().toISOString().slice(0, 10)}.csv`,
+    count: rows.length,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * VIP short-handle grants (3–4 characters)                            *
+ * ------------------------------------------------------------------ */
+
+export type VipGrantRow = {
+  userId: string;
+  handle: string | null;
+  displayName: string | null;
+  verified: boolean;
+  grantedAt: string;
+  /** ImprovMX mirror: synced 🟢 / pending 🟡 / failed 🔴. */
+  aliasSyncStatus: "synced" | "pending" | "failed";
+  aliasSyncAttempts: number;
+  aliasSyncedAt: string | null;
+  aliasSyncError: string | null;
+};
+
+function normalizeSyncStatus(value: unknown): "synced" | "pending" | "failed" {
+  return value === "synced" || value === "failed" ? value : "pending";
+}
+
+/** Every profile currently holding a VIP short-handle grant. */
+export async function listVipGrants(): Promise<VipGrantRow[]> {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data } = await dbAdmin
+    .from("profiles")
+    .select(
+      "id, username, display_name, verified, updated_at, alias_sync_status, alias_sync_attempts, alias_synced_at, alias_sync_error",
+    )
+    .eq("handle_grant", VIP_HANDLE_GRANT)
+    .order("updated_at", { ascending: false })
+    .limit(200);
+
+  return (data ?? []).map((p) => ({
+    userId: p.id,
+    handle: p.username,
+    displayName: p.display_name,
+    verified: Boolean(p.verified),
+    grantedAt: p.updated_at,
+    aliasSyncStatus: normalizeSyncStatus(p.alias_sync_status),
+    aliasSyncAttempts: p.alias_sync_attempts ?? 0,
+    aliasSyncedAt: p.alias_synced_at ?? null,
+    aliasSyncError: p.alias_sync_error ?? null,
+  }));
+}
+
+/** Drop a VIP grant. Short handles must be re-assigned before revoking. */
+export async function revokeVipGrant(opts: {
+  userId: string;
+  adminId: string;
+  reason?: string | null;
+}) {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data: profile } = await dbAdmin
+    .from("profiles")
+    .select("username, handle_grant")
+    .eq("id", opts.userId)
+    .maybeSingle();
+  if (!profile) return { ok: false as const, reason: "Profile not found." };
+  if (profile.handle_grant !== VIP_HANDLE_GRANT) {
+    return { ok: false as const, reason: "This account has no active VIP grant." };
+  }
+  if (profile.username && needsVipGrant(profile.username)) {
+    return {
+      ok: false as const,
+      reason: `@${profile.username} is a short handle — assign a handle of 5+ characters first.`,
+    };
+  }
+
+  const { error } = await dbAdmin
+    .from("profiles")
+    .update({ handle_grant: null })
+    .eq("id", opts.userId);
+  if (error) return { ok: false as const, reason: error.message };
+
+  await dbAdmin.from("security_events").insert({
+    user_id: opts.userId,
+    kind: "vip_handle_revoked",
+    severity: "warning",
+    message: "Your VIP short-handle grant was revoked.",
+    details: { handle: profile.username, admin_id: opts.adminId, reason: opts.reason ?? null },
+  });
+
+  await writeAudit({
+    adminId: opts.adminId,
+    action: "vip_handle_revoked",
+    targetUserId: opts.userId,
+    targetLabel: profile.username ?? null,
+    notes:
+      [profile.username ? `@${profile.username}` : null, opts.reason?.trim() || null]
+        .filter(Boolean)
+        .join(" · ") || null,
+  });
+
+  return { ok: true as const };
+}
+
+/* ------------------------------------------------------------------ *
+ * Bulk grants                                                         *
+ * ------------------------------------------------------------------ */
+
+export type BulkGrantLine = {
+  line: number;
+  raw: string;
+  handle: string | null;
+  identifier: string | null;
+  reason: string | null;
+};
+
+export type BulkGrantResult = BulkGrantLine & {
+  ok: boolean;
+  message: string;
+  userId?: string;
+};
+
+/**
+ * Parses a CSV/textarea payload. One grant per line:
+ * `handle, email-or-handle-or-userid, optional reason`.
+ * Lines starting with `#` and an optional `handle,...` header row are ignored.
+ */
+export function parseBulkGrantInput(input: string): BulkGrantLine[] {
+  const rows: BulkGrantLine[] = [];
+  input.split(/\r?\n/).forEach((raw, index) => {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    const cells = trimmed.split(/[,;\t]/).map((c) => c.trim());
+    const first = (cells[0] ?? "").toLowerCase().replace(/^@/, "");
+    if (index === 0 && first === "handle") return; // header row
+    rows.push({
+      line: index + 1,
+      raw: trimmed,
+      handle: first || null,
+      identifier: cells[1] || null,
+      reason: cells.slice(2).join(", ").trim() || null,
+    });
+  });
+  return rows;
+}
+
+/** Runs a parsed bulk payload sequentially so every row gets its own audit entry. */
+export async function bulkGrantVipHandles(opts: {
+  input: string;
+  adminId: string;
+  reason?: string | null;
+}): Promise<{ results: BulkGrantResult[]; granted: number; failed: number }> {
+  const { searchUsers } = await import("./admin.server");
+  const rows = parseBulkGrantInput(opts.input).slice(0, 100);
+  const results: BulkGrantResult[] = [];
+
+  for (const row of rows) {
+    const reason = row.reason ?? opts.reason ?? null;
+    if (!row.handle || !row.identifier) {
+      results.push({
+        ...row,
+        ok: false,
+        message: "Expected `handle, email-or-handle-or-id, reason`.",
+      });
+      continue;
+    }
+    if (!needsVipGrant(normalizeHandleInput(row.handle))) {
+      results.push({ ...row, ok: false, message: "Not a reserved short handle." });
+      continue;
+    }
+
+    const matches = await searchUsers(row.identifier);
+    if (matches.length === 0) {
+      results.push({ ...row, ok: false, message: `No account matches “${row.identifier}”.` });
+      continue;
+    }
+    if (matches.length > 1) {
+      results.push({
+        ...row,
+        ok: false,
+        message: `${matches.length} accounts match “${row.identifier}” — be more specific.`,
+      });
+      continue;
+    }
+
+    const target = matches[0]!;
+    const res = await changeHandle({
+      userId: target.userId,
+      handle: row.handle,
+      vipGrant: true,
+      adminId: opts.adminId,
+      reason,
+    });
+    results.push({
+      ...row,
+      userId: target.userId,
+      ok: res.ok,
+      message: res.ok ? `@${row.handle} granted to ${target.email ?? target.userId}` : res.reason,
+    });
+  }
+
+  const granted = results.filter((r) => r.ok).length;
+  return { results, granted, failed: results.length - granted };
+}
+
+/* ------------------------------------------------------------------ *
+ * VIP audit trail                                                     *
+ * ------------------------------------------------------------------ */
+
+export const VIP_AUDIT_ACTIONS = [
+  "vip_handle_granted",
+  "vip_handle_revoked",
+  "vip_alias_retry",
+  "handle_changed",
+] as const;
+
+export type VipAuditFilters = {
+  handle?: string;
+  adminEmail?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
+export type VipAuditEntry = {
+  id: string;
+  adminEmail: string | null;
+  action: string;
+  targetUserId: string | null;
+  targetLabel: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
+/** Audit entries scoped to VIP/handle actions, filterable by handle, admin and date range. */
+export async function fetchVipAuditLog(filters: VipAuditFilters = {}): Promise<VipAuditEntry[]> {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  let q = dbAdmin
+    .from("admin_audit_log")
+    .select("id, admin_email, action, target_user_id, target_label, notes, created_at")
+    .order("created_at", { ascending: false })
+    .limit(Math.min(filters.limit ?? 200, 500));
+
+  q =
+    filters.action && (VIP_AUDIT_ACTIONS as readonly string[]).includes(filters.action)
+      ? q.eq("action", filters.action)
+      : q.in("action", [...VIP_AUDIT_ACTIONS]);
+
+  if (filters.adminEmail) q = q.ilike("admin_email", `%${filters.adminEmail}%`);
+  if (filters.from) q = q.gte("created_at", new Date(filters.from).toISOString());
+  if (filters.to) {
+    const to = new Date(filters.to);
+    to.setHours(23, 59, 59, 999);
+    q = q.lte("created_at", to.toISOString());
+  }
+
+  const handle = filters.handle?.trim().replace(/^@/, "").toLowerCase();
+  if (handle) q = q.or(`target_label.ilike.%${handle}%,notes.ilike.%${handle}%`);
+
+  const { data } = await q;
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    adminEmail: r.admin_email,
+    action: r.action,
+    targetUserId: r.target_user_id,
+    targetLabel: r.target_label,
+    notes: r.notes,
+    createdAt: r.created_at,
+  }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Bulk VIP grant / alias retry — extends bulkModerate for the users   *
+ * tab's multi-select toolbar.                                         *
+ * ------------------------------------------------------------------ */
+
+export type BulkVipResult = { userId: string; ok: boolean; reason?: string };
+
+/**
+ * Grants the VIP short-handle allowance to every selected account that is
+ * verified and does not already hold it. Does not change the handle itself —
+ * an admin still assigns the short handle afterwards via `changeHandle`.
+ */
+export async function bulkGrantVip(opts: {
+  userIds: string[];
+  adminId: string;
+  reason?: string | null;
+}): Promise<{ ok: true; succeeded: number; failed: number; results: BulkVipResult[] }> {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const ids = [...new Set(opts.userIds)].slice(0, 200);
+  const results: BulkVipResult[] = [];
+
+  const { data: profiles } = await dbAdmin
+    .from("profiles")
+    .select("id, username, verified, handle_grant")
+    .in("id", ids);
+  const byId = new Map((profiles ?? []).map((p) => [p.id, p]));
+
+  for (const userId of ids) {
+    const profile = byId.get(userId);
+    if (!profile) {
+      results.push({ userId, ok: false, reason: "Profile not found." });
+      continue;
+    }
+    if (!profile.verified) {
+      results.push({ userId, ok: false, reason: "Only verified accounts can hold a VIP grant." });
+      continue;
+    }
+    if (profile.handle_grant === VIP_HANDLE_GRANT) {
+      results.push({ userId, ok: true });
+      continue;
+    }
+    const { error } = await dbAdmin
+      .from("profiles")
+      .update({ handle_grant: VIP_HANDLE_GRANT })
+      .eq("id", userId);
+    results.push(error ? { userId, ok: false, reason: error.message } : { userId, ok: true });
+  }
+
+  const succeeded = results.filter((r) => r.ok).length;
+  await writeAudit({
+    adminId: opts.adminId,
+    action: "bulk_vip_grant",
+    targetLabel: `${succeeded}/${ids.length} accounts`,
+    notes: opts.reason ?? null,
+  });
+
+  return { ok: true, succeeded, failed: ids.length - succeeded, results };
+}
+
+/** Requeues the ImprovMX alias job for every selected account, one at a time. */
+export async function bulkRetryAliasSync(opts: {
+  userIds: string[];
+  adminId: string;
+}): Promise<{ ok: true; succeeded: number; failed: number; results: BulkVipResult[] }> {
+  const { requeueUserAlias } = await import("./alias-sync.server");
+  const ids = [...new Set(opts.userIds)].slice(0, 200);
+  const results: BulkVipResult[] = [];
+
+  for (const userId of ids) {
+    try {
+      const res = await requeueUserAlias(userId);
+      results.push(
+        res.failed > 0
+          ? { userId, ok: false, reason: res.lastError ?? "Sync failed." }
+          : { userId, ok: true },
+      );
+    } catch (error) {
+      results.push({ userId, ok: false, reason: error instanceof Error ? error.message : "Sync failed." });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.ok).length;
+  await writeAudit({
+    adminId: opts.adminId,
+    action: "bulk_alias_retry",
+    targetLabel: `${succeeded}/${ids.length} accounts`,
+  });
+
+  return { ok: true, succeeded, failed: ids.length - succeeded, results };
+}
+
+/* ------------------------------------------------------------------ *
+ * System health KPIs                                                  *
+ * ------------------------------------------------------------------ */
+
+export type AdminKpis = {
+  activeUsers: number;
+  pendingVerifications: number;
+  incompletePayments: number;
+  pendingSepaPayments: number;
+  failedAliasSyncs: number;
+  improvmxConfigured: boolean;
+};
+
+/**
+ * One lightweight aggregate query per metric, reusing the same tables the
+ * portal's other tabs already read from — no new schema, just counts.
+ */
+export async function getAdminKpis(): Promise<AdminKpis> {
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { improvmxKey } = await import("./alias.server");
+  const { sql } = await import("@/lib/neon");
+
+  const [totalUsers, pendingUnique, incompletePayments, pendingSepaPayments, failedAliasSyncs] =
+    await Promise.all([
+      // "Actieve gebruikers" = alle geregistreerde profielen in Neon.
+      sql`select count(*)::int as n from public.profiles` as Promise<
+        Array<Record<string, unknown>>
+      >,
+      // Eén openstaande verificatie per gebruiker — nooit meer dan het aantal leden.
+      sql`
+        select count(distinct user_id)::int as n
+          from public.verification_payments
+         where status = 'pending'
+      ` as Promise<Array<Record<string, unknown>>>,
+      dbAdmin
+        .from("verification_payments")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "incomplete"),
+      dbAdmin
+        .from("verification_payments")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending")
+        .eq("provider", "sepa"),
+      dbAdmin
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("alias_sync_status", "failed"),
+    ]);
+
+  const activeUsers = Number(totalUsers[0]?.["n"] ?? 0);
+  const pendingVerifications = Math.min(Number(pendingUnique[0]?.["n"] ?? 0), activeUsers);
+
+  return {
+    activeUsers,
+    pendingVerifications,
+    incompletePayments: incompletePayments.count ?? 0,
+    pendingSepaPayments: pendingSepaPayments.count ?? 0,
+    failedAliasSyncs: failedAliasSyncs.count ?? 0,
+    improvmxConfigured: Boolean(improvmxKey()),
+  };
+}
+
+
+/* ------------------------------------------------------------------ *
+ * SEPA reference auto-parsing                                         *
+ * ------------------------------------------------------------------ */
+
+export type ReferenceMatch = {
+  reference: string | null;
+  matched: boolean;
+  paymentId: string | null;
+  userId: string | null;
+  username: string | null;
+  email: string | null;
+  status: string | null;
+};
+
+/**
+ * Parses a `ROUT-XXXXXX` reference out of a free-text bank description or
+ * message and looks it up against pending verification payments, so the
+ * admin gets a pre-filled match instead of relying on name matching alone.
+ */
+export async function matchPaymentByReference(text: string): Promise<ReferenceMatch> {
+  const { parseRoutReference } = await import("./reference-parser");
+  const reference = parseRoutReference(text);
+  if (!reference) {
+    return {
+      reference: null,
+      matched: false,
+      paymentId: null,
+      userId: null,
+      username: null,
+      email: null,
+      status: null,
+    };
+  }
+
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  const { data: payment } = await dbAdmin
+    .from("verification_payments")
+    .select("id, user_id, status, reference_code")
+    .eq("reference_code", reference)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!payment) {
+    return {
+      reference,
+      matched: false,
+      paymentId: null,
+      userId: null,
+      username: null,
+      email: null,
+      status: null,
+    };
+  }
+
+  const { data: profile } = await dbAdmin
+    .from("profiles")
+    .select("username")
+    .eq("id", payment.user_id)
+    .maybeSingle();
+
+  return {
+    reference,
+    matched: true,
+    paymentId: payment.id,
+    userId: payment.user_id,
+    username: profile?.username ?? null,
+    email: await emailFor(payment.user_id),
+    status: payment.status,
+  };
 }

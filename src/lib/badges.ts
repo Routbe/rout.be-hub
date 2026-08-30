@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+export type BadgeRarity = "artifact" | "common" | "uncommon" | "rare" | "epic";
 
 export interface BadgeDef {
   id: string;
@@ -8,48 +8,45 @@ export interface BadgeDef {
   icon: string;
   color: string;
   sort_order: number;
+  rarity?: BadgeRarity | null;
+  max_supply?: number | null;
 }
 
 export interface UnlockedBadge extends BadgeDef {
   awarded_at: string | null;
+  serial_number?: number | null;
 }
 
-/** The badge tables are optional infrastructure — a missing table must never break a profile. */
-type LooseClient = {
-  from: (table: string) => {
-    select: (cols: string) => {
-      order: (col: string, opts: { ascending: boolean }) => Promise<{ data: unknown }>;
-      eq: (col: string, value: string) => Promise<{ data: unknown }>;
-    };
-  };
-};
-
-const loose = () => supabase as unknown as LooseClient;
+/**
+ * Client-safe wrappers around the Neon-backed badge server functions. The
+ * badge tables are optional infrastructure — a failed call must never break a
+ * profile, so both helpers swallow errors and return an empty list.
+ */
 
 export async function fetchBadgeCatalogue(): Promise<BadgeDef[]> {
   try {
-    const { data } = await loose().from("badges").select("*").order("sort_order", {
-      ascending: true,
-    });
-    return Array.isArray(data) ? (data as BadgeDef[]) : [];
+    const { getBadgeCatalogue } = await import("./badges.functions");
+    const rows = await getBadgeCatalogue();
+    return (rows ?? []) as BadgeDef[];
   } catch {
     return [];
   }
 }
 
-/** Badges a specific user has unlocked, newest grant first in the catalogue order. */
-export async function fetchUserBadges(userId: string): Promise<UnlockedBadge[]> {
+/** Badges a specific user has unlocked, in catalogue order. The server always
+ * scopes this to the signed-in caller; `userId` is kept for call-site parity. */
+export async function fetchUserBadges(_userId: string): Promise<UnlockedBadge[]> {
   try {
-    const { data } = await loose()
-      .from("user_badges")
-      .select("awarded_at, badges(id, slug, name, description, icon, color, sort_order)")
-      .eq("user_id", userId);
-    if (!Array.isArray(data)) return [];
-    return (data as { awarded_at: string | null; badges: BadgeDef | null }[])
-      .filter((r) => r.badges)
-      .map((r) => ({ ...(r.badges as BadgeDef), awarded_at: r.awarded_at }))
-      .sort((a, b) => a.sort_order - b.sort_order);
+    const { getMyBadges } = await import("./badges.functions");
+    const rows = await getMyBadges();
+    return (rows ?? []) as UnlockedBadge[];
   } catch {
     return [];
   }
+}
+
+/** "#00012" reads like a certificate; plain numbers read like a database id. */
+export function formatSerial(serial?: number | null): string | null {
+  if (!serial || serial < 1) return null;
+  return `#${String(serial).padStart(5, "0")}`;
 }

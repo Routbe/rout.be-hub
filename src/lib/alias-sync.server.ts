@@ -7,6 +7,7 @@
  * status is mirrored on `profiles.alias_sync_status` so the admin UI can show
  * Synced 🟢 / Pending Sync 🟡 / Sync Failed 🔴 with a last-updated timestamp.
  */
+import { sql } from "@/lib/neon";
 
 export type AliasSyncAction = "provision" | "rename" | "pause" | "resume" | "delete" | "freeze";
 
@@ -23,10 +24,7 @@ type JobRow = {
   max_attempts: number;
 };
 
-async function admin() {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  return supabaseAdmin;
-}
+type Row = Record<string, unknown>;
 
 async function markProfile(
   userId: string,
@@ -34,16 +32,14 @@ async function markProfile(
   attempts: number,
   error: string | null,
 ) {
-  const db = await admin();
-  await db
-    .from("profiles")
-    .update({
-      alias_sync_status: status,
-      alias_sync_attempts: attempts,
-      alias_sync_error: error,
-      alias_synced_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
+  await sql`
+    update public.profiles
+       set alias_sync_status = ${status},
+           alias_sync_attempts = ${attempts},
+           alias_sync_error = ${error},
+           alias_synced_at = now()
+     where id = ${userId}
+  `;
 }
 
 /** Queues one alias operation and marks the profile as "pending sync". */
@@ -52,17 +48,17 @@ export async function enqueueAliasJob(
   action: AliasSyncAction,
   payload: Record<string, unknown> = {},
 ) {
-  const db = await admin();
-  const { data, error } = await db
-    .from("alias_sync_jobs")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .insert({ user_id: userId, action, payload: payload as any, max_attempts: MAX_ATTEMPTS })
-
-    .select("id")
-    .maybeSingle();
-  if (error) return { ok: false as const, reason: error.message };
-  await markProfile(userId, "pending", 0, null);
-  return { ok: true as const, jobId: data?.id ?? null };
+  try {
+    const rows = (await sql`
+      insert into public.alias_sync_jobs (user_id, action, payload, max_attempts)
+      values (${userId}, ${action}, ${JSON.stringify(payload)}, ${MAX_ATTEMPTS})
+      returning id
+    `) as Row[];
+    await markProfile(userId, "pending", 0, null);
+    return { ok: true as const, jobId: (rows[0]?.["id"] as string | undefined) ?? null };
+  } catch (error) {
+    return { ok: false as const, reason: error instanceof Error ? error.message : "insert failed" };
+  }
 }
 
 /** Retryable failures: rate limits, timeouts and transient network errors. */
@@ -103,10 +99,16 @@ async function runJob(job: JobRow): Promise<{ ok: boolean; detail: string; retry
     if (result.ok) return { ok: true, detail: "ok", retry: false };
 
     const detail = `${result.reason}${"detail" in result && result.detail ? `: ${result.detail}` : ""}`;
-    // Missing key / handle / forward address is terminal — retrying cannot help.
-    const terminal = ["not_configured", "no_username", "no_forward", "not_found"].includes(
-      result.reason,
-    );
+    // Missing key / handle / forward address, or a non-entitled (free) account
+    // is terminal — retrying cannot help.
+    const terminal = [
+      "not_configured",
+      "no_username",
+      "no_forward",
+      "not_found",
+      "not_entitled",
+    ].includes(result.reason);
+
     return { ok: false, detail, retry: !terminal && isTransient(detail) };
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown error";
@@ -119,15 +121,15 @@ async function runJob(job: JobRow): Promise<{ ok: boolean; detail: string; retry
  * right after every admin action and by the admin UI's refresh cycle.
  */
 export async function drainAliasSyncQueue(limit = 10) {
-  const db = await admin();
-  const { data } = await db
-    .from("alias_sync_jobs")
-    .select("id, user_id, action, payload, attempts, max_attempts")
-    .eq("status", "pending")
-    .order("created_at", { ascending: true })
-    .limit(limit);
+  const data = (await sql`
+    select id, user_id, action, payload, attempts, max_attempts
+      from public.alias_sync_jobs
+     where status = 'pending'
+     order by created_at asc
+     limit ${limit}
+  `) as unknown as JobRow[];
 
-  const jobs = (data ?? []) as unknown as JobRow[];
+  const jobs = data ?? [];
   let done = 0;
   let failed = 0;
   let retrying = 0;
@@ -141,10 +143,11 @@ export async function drainAliasSyncQueue(limit = 10) {
     if (res.ok) {
       done += 1;
 
-      await db
-        .from("alias_sync_jobs")
-        .update({ status: "done", attempts, last_error: null })
-        .eq("id", job.id);
+      await sql`
+        update public.alias_sync_jobs
+           set status = 'done', attempts = ${attempts}, last_error = null, updated_at = now()
+         where id = ${job.id}
+      `;
 
       await markProfile(job.user_id, "synced", attempts, null);
       continue;
@@ -155,10 +158,12 @@ export async function drainAliasSyncQueue(limit = 10) {
     if (giveUp) failed += 1;
     else retrying += 1;
 
-    await db
-      .from("alias_sync_jobs")
-      .update({ status: giveUp ? "failed" : "pending", attempts, last_error: res.detail })
-      .eq("id", job.id);
+    await sql`
+      update public.alias_sync_jobs
+         set status = ${giveUp ? "failed" : "pending"}, attempts = ${attempts},
+             last_error = ${res.detail}, updated_at = now()
+       where id = ${job.id}
+    `;
 
     await markProfile(job.user_id, giveUp ? "failed" : "pending", attempts, res.detail);
   }
@@ -168,11 +173,11 @@ export async function drainAliasSyncQueue(limit = 10) {
 
 /** Requeues every failed job so an admin can retry after fixing the API key. */
 export async function retryFailedAliasJobs() {
-  const db = await admin();
-  await db
-    .from("alias_sync_jobs")
-    .update({ status: "pending", attempts: 0, last_error: null })
-    .eq("status", "failed");
+  await sql`
+    update public.alias_sync_jobs
+       set status = 'pending', attempts = 0, last_error = null, updated_at = now()
+     where status = 'failed'
+  `;
   return drainAliasSyncQueue(25);
 }
 
@@ -182,20 +187,18 @@ export async function retryFailedAliasJobs() {
  * ImprovMX error straight away.
  */
 export async function requeueUserAlias(userId: string) {
-  const db = await admin();
-  const { data: existing } = await db
-    .from("alias_sync_jobs")
-    .select("id")
-    .eq("user_id", userId)
-    .in("status", ["failed", "pending"])
-    .limit(1);
+  const existing = (await sql`
+    select id from public.alias_sync_jobs
+     where user_id = ${userId} and status in ('failed', 'pending')
+     limit 1
+  `) as Row[];
 
-  if ((existing ?? []).length > 0) {
-    await db
-      .from("alias_sync_jobs")
-      .update({ status: "pending", attempts: 0, last_error: null })
-      .eq("user_id", userId)
-      .eq("status", "failed");
+  if (existing.length > 0) {
+    await sql`
+      update public.alias_sync_jobs
+         set status = 'pending', attempts = 0, last_error = null, updated_at = now()
+       where user_id = ${userId} and status = 'failed'
+    `;
   } else {
     await enqueueAliasJob(userId, "provision");
   }
@@ -206,15 +209,16 @@ export async function requeueUserAlias(userId: string) {
 export type QueueSummary = { pending: number; failed: number; done: number };
 
 export async function aliasQueueSummary(): Promise<QueueSummary> {
-  const db = await admin();
-  const counts = await Promise.all(
-    (["pending", "failed", "done"] as const).map(async (status) => {
-      const { count } = await db
-        .from("alias_sync_jobs")
-        .select("id", { count: "exact", head: true })
-        .eq("status", status);
-      return [status, count ?? 0] as const;
-    }),
-  );
-  return Object.fromEntries(counts) as QueueSummary;
+  const rows = (await sql`
+    select status, count(*)::int as count
+      from public.alias_sync_jobs
+     where status in ('pending', 'failed', 'done')
+     group by status
+  `) as Row[];
+  const summary: QueueSummary = { pending: 0, failed: 0, done: 0 };
+  for (const row of rows) {
+    const status = row["status"] as keyof QueueSummary;
+    summary[status] = row["count"] as number;
+  }
+  return summary;
 }

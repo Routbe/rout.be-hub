@@ -1,7 +1,11 @@
 import { useState, useMemo } from "react";
-import { detectBrand } from "@/lib/brand";
+import { BRAND_SHAPES, detectBrand, loadLogoDataUrl } from "@/lib/brand";
+import { toast } from "sonner";
 import { contrastRatio, AA_TARGET } from "@/lib/wcag";
-import { BrandSuggestionCard } from "./BrandSuggestionCard";
+import { BrandSuggestionCard, type BrandApplyOptions } from "./BrandSuggestionCard";
+import { roundImageDataUrl } from "@/lib/logo-image";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -32,6 +36,7 @@ import {
 } from "@/components/ui/accordion";
 import { Upload } from "lucide-react";
 import { SelectionIndicator } from "./SelectionIndicator";
+import { NoneGlyph } from "./NoneGlyph";
 import { PickerAnnouncer } from "./PickerAnnouncer";
 
 import { useRovingRadioGroup } from "@/hooks/useRovingRadioGroup";
@@ -138,6 +143,13 @@ interface QRStyleTabsProps {
   frameTweaks?: FrameTweaks;
   onFrameTweaksChange?: (t: FrameTweaks) => void;
   onFrameFontChange?: (id: string) => void;
+  /** Print the short link as readable text under the QR. */
+  captionEnabled?: boolean;
+  onCaptionEnabledChange?: (v: boolean) => void;
+  captionText?: string;
+  onCaptionTextChange?: (v: string) => void;
+  /** Suggested caption (the active short link), shown as a one-tap fill. */
+  captionSuggestion?: string;
 }
 
 const frameStyles: { id: FrameStyle; preview: string }[] = [
@@ -151,6 +163,43 @@ const frameStyles: { id: FrameStyle; preview: string }[] = [
   { id: "pill-v", preview: "rounded-full" },
   { id: "circle", preview: "rounded-full" },
 ];
+
+/** Compact labelled slider used by the centre-logo controls. */
+function LogoSlider({
+  label,
+  value,
+  suffix,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  suffix: string;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium text-foreground">{label}</span>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {value}
+          {suffix}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={1}
+        onValueChange={([v]) => onChange(v)}
+        aria-label={label}
+      />
+    </div>
+  );
+}
 
 export function QRStyleTabs({
   qrType,
@@ -218,6 +267,11 @@ export function QRStyleTabs({
   frameTweaks = DEFAULT_FRAME_TWEAKS,
   onFrameTweaksChange,
   onFrameFontChange,
+  captionEnabled = false,
+  onCaptionEnabledChange,
+  captionText = "",
+  onCaptionTextChange,
+  captionSuggestion = "",
 }: QRStyleTabsProps) {
   const { t } = useI18n();
   // Starts on 'transparent' because that is the actual initial background —
@@ -226,6 +280,11 @@ export function QRStyleTabs({
   const logoGroup = useRovingRadioGroup<HTMLDivElement>();
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [dismissedBrand, setDismissedBrand] = useState<string | null>(null);
+  const [brandBusy, setBrandBusy] = useState(false);
+  const [brandLogoError, setBrandLogoError] = useState<string | null>(null);
+  /** Untouched source of the centre logo so corner rounding stays reversible. */
+  const [logoSource, setLogoSource] = useState<string | null>(logo);
+  const [logoRadius, setLogoRadius] = useState(0);
 
   // Brand intelligence — only link-like types carry a domain worth reading.
   const linkLikeValue = ["url", "app", "image", "pdf", "mp3"].includes(qrType) ? value : "";
@@ -242,21 +301,54 @@ export function QRStyleTabs({
     if (theme.shape) onBodyShapeChange?.(theme.shape);
   };
 
-  const applyBrandColors = () => {
+  const applyBrandColors = (invert: boolean) => {
     if (!brand) return;
     setSelectedTheme("");
     // Root cause (bug #1, partial merge): only colours change here — pattern,
-    // corner style, dots and matrix config are left untouched so "Brand it" /
-    // "Colours only" never re-initializes the QR matrix.
-    const safe = safeBrandPalette(brand.fgColor, brand.bgColor);
+    // corner style, dots and matrix config are left untouched so "Brand it"
+    // never re-initializes the QR matrix.
+    const safe = safeBrandPalette(
+      invert ? brand.bgColor : brand.fgColor,
+      invert ? brand.fgColor : brand.bgColor,
+    );
     onFgColorChange(safe.fgColor);
     onBgColorChange(safe.bgColor);
     onBgGradientChange?.(null);
   };
 
-  const applyBrandLogo = () => {
+  /** Shape language that matches the brand (rounded, geometric, dotted…). */
+  const applyBrandStyle = (shapeKey: BrandApplyOptions["shape"]) => {
+    const style = BRAND_SHAPES[shapeKey] ?? brand?.style;
+    if (!style) return;
+    onBodyShapeChange?.(style.bodyShape as BodyShape);
+    onDotStyleChange?.(style.dotStyle as DotType);
+    onOuterCornerStyleChange?.(style.outerCornerStyle as CornerSquareType);
+    onInnerCornerStyleChange?.(style.innerCornerStyle as CornerDotType);
+  };
+
+  const applyBrandLogo = async () => {
     if (!brand) return;
-    onLogoChange(brand.logo);
+    setBrandBusy(true);
+    setBrandLogoError(null);
+    // The favicon is inlined first: handing the renderer a URL that 404s or
+    // lacks CORS headers is what used to blank the preview.
+    const dataUrl = await loadLogoDataUrl(brand.domain);
+    setBrandBusy(false);
+    if (!dataUrl) {
+      setBrandLogoError(
+        `Het logo van ${brand.domain} kon niet geladen worden (site blokkeert het of stuurt geen icoon). Kleuren en stijl zijn wel toegepast.`,
+      );
+      return;
+    }
+    await setLogoWithRounding(dataUrl);
+  };
+
+  /** One entry point for the card: apply exactly what the user ticked. */
+  const handleBrandApply = (options: BrandApplyOptions) => {
+    if (options.colors) applyBrandColors(options.invert);
+    if (options.style) applyBrandStyle(options.shape);
+    if (options.logo) void applyBrandLogo();
+    else setBrandLogoError(null);
   };
 
   const clearThemeSelection = () => {
@@ -289,6 +381,8 @@ export function QRStyleTabs({
     frameId,
     frameLabel,
     frameFont,
+    captionEnabled,
+    captionText,
   };
 
   const applyPreset = (style: QrStyleSnapshot) => {
@@ -306,6 +400,8 @@ export function QRStyleTabs({
     onFrameIdChange?.(style.frameId);
     onFrameLabelChange?.(style.frameLabel);
     onFrameFontChange?.(style.frameFont);
+    onCaptionEnabledChange?.(style.captionEnabled);
+    onCaptionTextChange?.(style.captionText);
   };
 
   const applyContrastFix = (next: { fgColor: string; bgColor: string }) => {
@@ -317,12 +413,27 @@ export function QRStyleTabs({
     }
   };
 
+  /** Store the pristine source, push the rounded derivative to the renderer. */
+  const setLogoWithRounding = async (src: string | null, radius = logoRadius) => {
+    setLogoSource(src);
+    if (!src) {
+      onLogoChange(null);
+      return;
+    }
+    onLogoChange(await roundImageDataUrl(src, radius));
+  };
+
+  const handleLogoRadiusChange = (radius: number) => {
+    setLogoRadius(radius);
+    if (logoSource) void setLogoWithRounding(logoSource, radius);
+  };
+
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        onLogoChange(event.target?.result as string);
+        void setLogoWithRounding(event.target?.result as string);
       };
       reader.readAsDataURL(file);
     }
@@ -397,7 +508,7 @@ export function QRStyleTabs({
                         : "bg-secondary text-foreground hover:bg-secondary/80",
                     )}
                   >
-                    {enc === "nopass" ? "None" : enc}
+                    {enc === "nopass" ? t("style.none") : enc}
                   </button>
                 ))}
               </div>
@@ -513,12 +624,9 @@ export function QRStyleTabs({
         {showBrand && brand && (
           <BrandSuggestionCard
             brand={brand}
-            onApplyColors={applyBrandColors}
-            onApplyLogo={applyBrandLogo}
-            onApplyBoth={() => {
-              applyBrandColors();
-              applyBrandLogo();
-            }}
+            busy={brandBusy}
+            logoError={brandLogoError}
+            onApply={handleBrandApply}
             onDismiss={() => setDismissedBrand(brand.domain)}
           />
         )}
@@ -574,22 +682,23 @@ export function QRStyleTabs({
           >
             <button
               type="button"
-              onClick={() => onLogoChange(null)}
+              onClick={() => void setLogoWithRounding(null)}
               role="radio"
               aria-checked={!logo}
               aria-label={t("style.none")}
               tabIndex={!logo ? 0 : -1}
               className={cn(
-                "relative flex-1 h-16 overflow-visible rounded-xl border-2 flex items-center justify-center text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "relative flex-1 h-16 overflow-visible rounded-xl border-2 flex flex-col items-center justify-center gap-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 !logo ? "border-foreground bg-muted/60" : "border-border hover:bg-secondary",
               )}
             >
               <SelectionIndicator visible={!logo} />
-              {t("style.none")}
+              <NoneGlyph />
+              <span>{t("style.none")}</span>
             </button>
             <button
               type="button"
-              onClick={() => onLogoChange(routBunnySrc)}
+              onClick={() => void setLogoWithRounding(routBunnySrc)}
               title="ROUT bunny"
               role="radio"
               aria-checked={logo === routBunnySrc}
@@ -631,6 +740,35 @@ export function QRStyleTabs({
           </div>
 
           <p className="text-[11px] text-muted-foreground">{t("style.centerHint")}</p>
+
+          {logo && (
+            <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-3">
+              <LogoSlider
+                label="Grootte"
+                value={Math.round(logoSize * 100)}
+                suffix="%"
+                min={15}
+                max={50}
+                onChange={(v) => onLogoSizeChange?.(v / 100)}
+              />
+              <LogoSlider
+                label="Vrije ruimte"
+                value={logoMargin}
+                suffix="px"
+                min={0}
+                max={30}
+                onChange={(v) => onLogoMarginChange?.(v)}
+              />
+              <LogoSlider
+                label="Ronde hoeken"
+                value={logoRadius}
+                suffix="%"
+                min={0}
+                max={50}
+                onChange={handleLogoRadiusChange}
+              />
+            </div>
+          )}
         </div>
 
         {/* Color Picker */}
@@ -673,6 +811,48 @@ export function QRStyleTabs({
                 fgColor={fgColor}
                 bgColor={bgColor}
               />
+
+              {/* Readable short link printed under the code */}
+              <div className="mt-4 space-y-3 rounded-xl border border-border/70 bg-card/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Short link onder de QR</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      De QR blijft naar je bestemming wijzen; eronder staat de korte link om over te
+                      typen.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={captionEnabled}
+                    onCheckedChange={(v) => onCaptionEnabledChange?.(v)}
+                    aria-label="Short link onder de QR tonen"
+                  />
+                </div>
+                {captionEnabled && (
+                  <div className="space-y-1.5">
+                    <Input
+                      value={captionText}
+                      onChange={(e) => onCaptionTextChange?.(e.target.value.slice(0, 42))}
+                      placeholder={captionSuggestion || "rout.be/s/abc1234"}
+                      className="h-10 font-mono text-xs"
+                    />
+                    {captionSuggestion && captionSuggestion !== captionText && (
+                      <button
+                        type="button"
+                        onClick={() => onCaptionTextChange?.(captionSuggestion)}
+                        className="text-[11px] underline text-muted-foreground hover:text-foreground"
+                      >
+                        Gebruik {captionSuggestion}
+                      </button>
+                    )}
+                    {!captionSuggestion && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Maak eerst een short link, of typ zelf een korte tekst.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </AccordionContent>
           </AccordionItem>
 

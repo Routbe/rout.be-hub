@@ -1,5 +1,6 @@
 import { useState, forwardRef, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { NoneGlyph } from "./NoneGlyph";
 import { SelectionIndicator } from "@/components/SelectionIndicator";
 import { PickerAnnouncer } from "@/components/PickerAnnouncer";
 
@@ -94,7 +95,7 @@ const ColorPickerTriggerButton = forwardRef<
   <button
     ref={ref}
     type="button"
-    aria-label="Pick a custom colour"
+    aria-label="Aangepaste kleur kiezen"
     {...props}
     className="w-9 h-9 rounded-full transition-all duration-200 flex items-center justify-center flex-shrink-0 border border-border overflow-hidden"
     style={{
@@ -134,7 +135,7 @@ function ColorPickerPopover({
         {isCustomSelected ? (
           <button
             type="button"
-            aria-label="Custom colour (selected)"
+            aria-label="Aangepaste kleur (geselecteerd)"
             className="relative w-9 h-9 rounded-full border border-foreground flex items-center justify-center p-0.5 flex-shrink-0 overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <SelectionIndicator visible />
@@ -157,13 +158,13 @@ function ColorPickerPopover({
               value="swatches"
               className="text-sm font-medium rounded-full data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm text-muted-foreground"
             >
-              Swatches
+              Stalen
             </TabsTrigger>
             <TabsTrigger
               value="custom"
               className="text-sm font-medium rounded-full data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm text-muted-foreground"
             >
-              Custom
+              Aangepast
             </TabsTrigger>
           </TabsList>
 
@@ -314,7 +315,7 @@ export function ColorPicker({
       {/* Foreground Color */}
       <div className="space-y-2 w-full">
         <p className="text-xs text-muted-foreground" id="fg-swatch-label">
-          QR Code
+          Voorgrond
         </p>
 
         <div
@@ -355,7 +356,7 @@ export function ColorPicker({
       {/* Background Color */}
       <div className="space-y-2 w-full">
         <p className="text-xs text-muted-foreground" id="bg-swatch-label">
-          Background
+          Achtergrond
         </p>
         <div
           role="radiogroup"
@@ -364,15 +365,15 @@ export function ColorPicker({
           onKeyDown={bgGroup.onKeyDown}
           className="flex items-center gap-1 flex-wrap sm:flex-nowrap sm:justify-between w-full overflow-visible pt-2"
         >
-          {/* Transparent / clear background */}
+          {/* Geen / transparante achtergrond */}
           <button
             type="button"
             role="radio"
             aria-checked={bgColor === "transparent"}
-            aria-label="Transparent background"
+            aria-label="Geen achtergrond (transparant)"
             tabIndex={bgColor === "transparent" ? 0 : -1}
             onClick={() => handleBgSwatchClick("transparent")}
-            title="Transparent background"
+            title="Geen achtergrond (transparant)"
             className={cn(
               "relative rounded-full transition-all duration-200 flex items-center justify-center flex-shrink-0 p-0.5 border w-9 h-9 overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
               bgColor === "transparent"
@@ -381,15 +382,7 @@ export function ColorPicker({
             )}
           >
             <SelectionIndicator visible={bgColor === "transparent"} />
-            <div
-              className="w-full h-full rounded-full border border-border overflow-hidden"
-              style={{
-                backgroundImage:
-                  "linear-gradient(45deg,#d4d4d4 25%,transparent 25%),linear-gradient(-45deg,#d4d4d4 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d4d4d4 75%),linear-gradient(-45deg,transparent 75%,#d4d4d4 75%)",
-                backgroundSize: "8px 8px",
-                backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px",
-              }}
-            ></div>
+            <NoneGlyph size="sm" />
           </button>
           {visibleBgSwatches.slice(1).map((color) => (
             <ColorSwatch

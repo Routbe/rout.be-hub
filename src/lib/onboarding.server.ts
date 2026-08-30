@@ -3,21 +3,11 @@
  * name → handle suggestion and the dev-only super-admin bootstrap.
  */
 
+import { sql } from "@/lib/neon";
+import { RESERVED_SLUGS } from "./reserved-slugs";
+
 const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
-const RESERVED = new Set([
-  "admin",
-  "api",
-  "auth",
-  "dashboard",
-  "free",
-  "rout",
-  "settings",
-  "studio",
-  "support",
-  "hub",
-  "go",
-  "docs",
-]);
+const RESERVED = RESERVED_SLUGS;
 
 export function normalizeHandle(raw: string) {
   return raw.trim().replace(/^@/, "").toLowerCase();
@@ -34,92 +24,126 @@ export function throttle(key: string, windowMs = 300) {
   return true;
 }
 
-export type HandleAvailability = { ok: boolean; normalized: string; reason?: string };
+/**
+ * `code` is a stable, translation-friendly reason; `reason` stays as the
+ * English fallback copy for API consumers and older callers.
+ */
+export type HandleAvailabilityCode =
+  | "empty"
+  | "too_short"
+  | "too_long"
+  | "charset"
+  | "reserved"
+  | "rules"
+  | "taken";
+
+export type HandleAvailability = {
+  ok: boolean;
+  normalized: string;
+  reason?: string;
+  code?: HandleAvailabilityCode;
+};
 
 export async function isHandleFree(normalized: string): Promise<HandleAvailability> {
-  if (!normalized) return { ok: false, normalized, reason: "Pick a handle." };
-  if (normalized.length < 3) return { ok: false, normalized, reason: "At least 3 characters." };
-  if (normalized.length > 120) return { ok: false, normalized, reason: "Maximum 120 characters." };
+  if (!normalized) return { ok: false, normalized, code: "empty", reason: "Pick a handle." };
+  if (normalized.length < 3)
+    return { ok: false, normalized, code: "too_short", reason: "At least 3 characters." };
+  if (normalized.length > 120)
+    return { ok: false, normalized, code: "too_long", reason: "Maximum 120 characters." };
   if (!HANDLE_PATTERN.test(normalized)) {
     return {
       ok: false,
       normalized,
+      code: "charset",
       reason: "Use a–z, 0–9, dot, dash or underscore; start and end alphanumeric.",
     };
   }
   if (RESERVED.has(normalized)) {
-    return { ok: false, normalized, reason: "This handle is reserved by the platform." };
+    return {
+      ok: false,
+      normalized,
+      code: "reserved",
+      reason: "This handle is reserved by the platform.",
+    };
   }
-  // 3- and 4-character handles are a scarce resource: admin VIP grant only.
-  const { needsVipGrant, SHORT_HANDLE_MESSAGE } = await import("./handle-rules");
-  if (needsVipGrant(normalized)) {
-    return { ok: false, normalized, reason: SHORT_HANDLE_MESSAGE };
+  // < 3 too short, 3–4 reserved for VIP grants, 5+ open to everyone.
+  const { handleRuleMessage } = await import("./handle-rules");
+  const lengthIssue = handleRuleMessage(normalized, { tier: "free" });
+  if (lengthIssue) {
+    return { ok: false, normalized, code: "rules", reason: lengthIssue };
   }
 
 
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data } = await supabaseAdmin
-    .from("profiles")
-    .select("id")
-    .ilike("username", normalized)
-    .limit(1);
 
-  if ((data ?? []).length > 0) return { ok: false, normalized, reason: "Already taken." };
+  // Public availability probe: never depend on an auth session, and never
+  // block sign-up if the query is slow or fails.
+  try {
+    const rows = (await sql`
+      select id from public.profiles where lower(username) = ${normalized} limit 1
+    `) as Record<string, unknown>[];
+    if (rows.length > 0) return { ok: false, normalized, code: "taken", reason: "Already taken." };
+  } catch {
+    return { ok: true, normalized };
+  }
   return { ok: true, normalized };
 }
 
-/** "Jona De Vries" → "jona.devries", then "jona.devries2" … until free. */
-export async function suggestFreeHandle(fullName: string) {
-  const base =
-    normalizeHandle(fullName)
+/** "Jona De Vries" / "jona.delplanche@gmail.com" → "jona.devries" style base. */
+function handleBase(raw: string): string {
+  return (
+    normalizeHandle(raw)
+      .split("@")[0]!
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, ".")
       .replace(/^\.+|\.+$/g, "")
-      .slice(0, 40) || "rout.user";
+      .replace(/\.{2,}/g, ".")
+      .slice(0, 32) || "rout.user"
+  );
+}
+
+/** Two random digits — the free tier always carries a numeric discriminator. */
+function twoDigits(): string {
+  return String(Math.floor(10 + Math.random() * 90));
+}
+
+/**
+ * Free-tier suggestion: base + 2 digits (e.g. `jona.delplanche48`), retried
+ * with fresh digits until the handle is actually free in the database.
+ * Free handles must contain at least 2 digits, so a bare base is never valid.
+ */
+export async function suggestFreeHandle(nameOrEmail: string) {
+  const base = handleBase(nameOrEmail);
 
   for (let i = 0; i < 25; i += 1) {
-    const candidate = i === 0 ? base : `${base}${i + 1}`;
+    const candidate = `${base}${twoDigits()}`;
     // eslint-disable-next-line no-await-in-loop
     const res = await isHandleFree(candidate);
     if (res.ok) return candidate;
   }
-  return `${base}${Date.now().toString(36).slice(-4)}`;
+  return `${base}${Date.now().toString().slice(-4)}`;
 }
 
-/** Dev-only: create a confirmed account and grant it the admin role. */
-export async function mintTestSuperAdmin() {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const email = "admin@rout.be";
-  const password = "DevAdmin!2024";
+/**
+ * Registration helper: derive the part before the `@` from the e-mail address
+ * and return a set of free suggestions, most natural first.
+ */
+export async function suggestHandlesFromEmail(email: string, count = 3) {
+  const base = handleBase(email);
+  const out: string[] = [];
+  const shortBase = base.includes(".") ? base.split(".")[0]! : base;
 
-  // Idempotent: reuse the fixed dev super admin when it already exists so the
-  // quick-login button keeps working across restarts.
-  const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { full_name: "Dev Super Admin" },
-  });
-
-  let userId = created?.user?.id ?? null;
-  if (!userId) {
-    const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    const existing = (list?.users ?? []).find((u) => u.email?.toLowerCase() === email);
-    if (!existing) {
-      return { ok: false as const, reason: error?.message ?? "Could not create the test account." };
+  for (const candidateBase of [base, shortBase]) {
+    for (let i = 0; i < 12 && out.length < count; i += 1) {
+      const candidate = `${candidateBase}${twoDigits()}`;
+      if (out.includes(candidate)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const res = await isHandleFree(candidate);
+      if (res.ok) out.push(candidate);
     }
-    userId = existing.id;
-    await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password,
-      email_confirm: true,
-      ban_duration: "none",
-    });
+    if (out.length >= count) break;
   }
 
-  await supabaseAdmin
-    .from("user_roles")
-    .upsert({ user_id: userId, role: "admin" }, { onConflict: "user_id,role" });
-
-  return { ok: true as const, email, password };
+  if (out.length === 0) out.push(`${base}${Date.now().toString().slice(-4)}`);
+  return out;
 }

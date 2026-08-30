@@ -17,7 +17,10 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
+import { db } from "@/lib/db/client";
+import { allocateSlug, shortLinkQrValue, shortLinkUrl } from "@/lib/short-links";
 import { useI18n } from "@/lib/i18n";
+import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
 
 interface Scan {
@@ -40,6 +43,15 @@ interface Tracked {
   expires_at: string | null;
 }
 
+interface RawScan {
+  scanned_at: string;
+  country: string | null;
+  device: string | null;
+  browser: string | null;
+  os: string | null;
+}
+
+
 interface StatsResponse {
   tracked: Tracked;
   scans: Scan[];
@@ -53,7 +65,7 @@ function useTitle(title: string) {
 }
 
 export default function Stats() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { user } = useAuth();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<StatsResponse | null>(null);
@@ -70,14 +82,31 @@ export default function Stats() {
     setLoading(true);
     setError(null);
     try {
-      const url = `/api/public/qr/stats?token=${encodeURIComponent(token)}`;
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        setError(resp.status === 404 ? "Dashboard not found." : "Failed to load stats");
+      // The dashboard token itself is the credential; the lookup runs through a
+      // database function so no other link is ever readable.
+      const { data: raw, error: rpcError } = await (db as unknown as { rpc: (fn: string, args: unknown) => Promise<{ data: unknown; error: { message: string } | null }> }).rpc("short_link_stats", {
+        _token: token,
+      });
+      if (rpcError) throw new Error(rpcError.message);
+      if (!raw) {
+        setError("Dashboard not found.");
         setLoading(false);
         return;
       }
-      const json = (await resp.json()) as StatsResponse;
+      const payload = raw as unknown as { qr: Record<string, unknown>; scans: RawScan[] };
+      const qr = payload.qr as unknown as Tracked & { custom_domain: string | null };
+      const scans = (payload.scans ?? []).map((s) => ({
+        scanned_at: s.scanned_at,
+        country: s.country,
+        device: s.device,
+        browser: s.browser,
+        os: s.os,
+      }));
+      const json: StatsResponse = {
+        tracked: { ...qr, redirect_url: shortLinkQrValue(qr.slug, qr.custom_domain) },
+        scans,
+        total: scans.length,
+      };
       setData(json);
       setExpiryInput(json.tracked.expires_at ? json.tracked.expires_at.slice(0, 16) : "");
       setTargetInput(json.tracked.target_url);
@@ -138,34 +167,35 @@ export default function Stats() {
   };
 
   const downloadCsv = () => {
-    if (!token) return;
-    const url = `/api/public/qr/stats?token=${encodeURIComponent(token)}&format=csv`;
-    // Fetch as blob so the download filename is honored
-    fetch(url)
-      .then((r) => r.blob())
-      .then((blob) => {
-        const a = document.createElement("a");
-        const objUrl = URL.createObjectURL(blob);
-        a.href = objUrl;
-        a.download = `qr-scans-${data?.tracked.slug ?? "export"}.csv`;
-        a.click();
-        URL.revokeObjectURL(objUrl);
-      })
-      .catch(() => toast.error("CSV download failed"));
+    if (!data) return;
+    const header = "scanned_at,country,device,browser,os";
+    const rows = data.scans.map((s) =>
+      [s.scanned_at, s.country ?? "", s.device ?? "", s.browser ?? "", s.os ?? ""]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(","),
+    );
+    const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    const objUrl = URL.createObjectURL(blob);
+    a.href = objUrl;
+    a.download = `qr-scans-${data.tracked.slug}.csv`;
+    a.click();
+    URL.revokeObjectURL(objUrl);
   };
 
   const manage = async (body: Record<string, unknown>, successMsg: string) => {
     if (!token) return;
     setManaging(true);
     try {
-      const resp = await fetch("/api/public/qr/manage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dashboard_token: token, ...body }),
+      const { error } = await (db as unknown as { rpc: (fn: string, args: unknown) => Promise<{ error: { message: string } | null }> }).rpc("manage_short_link", {
+        _token: token,
+        _action: body.action as string,
+        _target_url: (body.target_url as string | undefined) ?? null,
+        _is_active: (body.is_active as boolean | undefined) ?? null,
+        _expires_at: (body.expires_at as string | null | undefined) ?? null,
+        _slug: (body.slug as string | undefined) ?? null,
       });
-      const res = (await resp.json()) as { error?: string } | null;
-      if (!resp.ok) throw new Error(res?.error ?? "Action failed");
-      if (res?.error) throw new Error(res.error);
+      if (error) throw new Error(error.message);
       toast.success(successMsg);
       await load();
     } catch (e: unknown) {
@@ -175,9 +205,14 @@ export default function Stats() {
     }
   };
 
-  const regenerate = () => {
+  const regenerate = async () => {
     if (!confirm("Regenerate the short link? Existing printed QR codes will stop working.")) return;
-    manage({ action: "regenerate_slug" }, "New short link generated");
+    const slug = await allocateSlug();
+    if (!slug) {
+      toast.error("Could not generate a new short code");
+      return;
+    }
+    manage({ action: "regenerate_slug", slug }, "New short link generated");
   };
   const toggleActive = () => {
     if (!data) return;
@@ -263,7 +298,7 @@ export default function Stats() {
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     {t("stats.totalScans")}
                   </p>
-                  <p className="text-5xl font-medium text-foreground mt-1">{data.total}</p>
+                  <p className="text-5xl font-medium text-foreground mt-1">{formatNumber(data.total, locale)}</p>
                   {data.tracked.label && (
                     <p className="text-sm text-muted-foreground mt-2">{data.tracked.label}</p>
                   )}
@@ -286,7 +321,7 @@ export default function Stats() {
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">{t("stats.created")}</p>
                   <p className="text-sm">
-                    {new Date(data.tracked.created_at).toLocaleDateString()}
+                    {formatDate(data.tracked.created_at, locale)}
                   </p>
                   <Button
                     onClick={downloadCsv}
@@ -442,7 +477,7 @@ export default function Stats() {
                   {data.scans.slice(0, 25).map((s, i) => (
                     <div key={i} className="py-2 flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
-                        {new Date(s.scanned_at).toLocaleString()}
+                        {formatDateTime(s.scanned_at, locale)}
                       </span>
                       <span className="text-foreground">
                         {s.country ?? "—"} · {s.device ?? "—"}

@@ -100,7 +100,7 @@ export function SealFrame({
 
 /** Subtle dot-matrix used as a technical texture inside a few seals. */
 export function DotMatrix({ cx, cy, size = 3 }: { cx: number; cy: number; size?: number }) {
-  const dots = [];
+  const dots: React.ReactElement[] = [];
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
       dots.push(

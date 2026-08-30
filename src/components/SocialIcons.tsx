@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
-import { MaskedIcon } from "./MaskedIcon";
-import { BRAND_MARKS } from "@/lib/brand-marks";
+import { cn } from "@/lib/utils";
+
 
 /** Monochrome brand marks not covered by lucide-react. */
 
@@ -18,12 +18,32 @@ export function BlueskyIcon(props: SVGProps<SVGSVGElement>) {
 export function MastodonIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
-      <path d="M21.6 8.9c0-4.2-2.7-5.4-2.7-5.4C17.5 2.8 15.1 2.5 12.6 2.5h-.06c-2.5 0-4.9.3-6.3.99 0 0-2.7 1.2-2.7 5.4 0 1 0 2.1.03 3.4.1 4.2.8 8.4 4.7 9.4 1.8.5 3.4.6 4.6.5 2.3-.1 3.5-.8 3.5-.8l-.07-1.7s-1.6.5-3.4.4c-1.8-.06-3.6-.2-3.9-2.4a4 4 0 0 1-.04-.6s1.7.4 3.9.5c1.3.06 2.6-.08 3.9-.24 2.5-.3 4.7-1.85 5-3.27.4-2.24.4-5.47.4-5.47Zm-3.3 5.5h-2.05V9.4c0-1.06-.45-1.6-1.35-1.6-1 0-1.5.64-1.5 1.9v2.76h-2.03V9.7c0-1.26-.5-1.9-1.5-1.9-.9 0-1.35.54-1.35 1.6v5h-2.06V9.25c0-1.06.27-1.9.82-2.52a2.8 2.8 0 0 1 2.16-.94c1.02 0 1.8.39 2.31 1.17l.51.86.51-.86c.51-.78 1.29-1.17 2.31-1.17.88 0 1.6.31 2.16.94.55.62.82 1.46.82 2.52v5.15Z" />
+      <path d="M23.268 5.313c-.35-2.578-2.617-4.61-5.304-5.004C17.51.242 15.792 0 11.813 0h-.03c-3.98 0-4.835.242-5.288.309C3.882.692 1.496 2.518.917 5.127.64 6.412.61 7.837.661 9.143c.074 1.874.088 3.745.26 5.611.118 1.24.325 2.47.62 3.68.55 2.237 2.777 4.098 4.96 4.857 2.336.792 4.849.923 7.256.38.265-.061.527-.132.786-.213.585-.184 1.27-.39 1.774-.753a.057.057 0 0 0 .023-.043v-1.809a.052.052 0 0 0-.02-.041.053.053 0 0 0-.046-.01 20.282 20.282 0 0 1-4.709.545c-2.73 0-3.463-1.284-3.674-1.818a5.593 5.593 0 0 1-.319-1.433.053.053 0 0 1 .066-.054c1.517.363 3.072.546 4.632.546.376 0 .75 0 1.125-.01 1.57-.044 3.224-.124 4.768-.422.038-.008.077-.015.11-.024 2.435-.464 4.753-1.92 4.989-5.604.008-.145.03-1.52.03-1.67.002-.512.167-3.63-.024-5.545zm-3.748 9.195h-2.561V8.29c0-1.309-.55-1.976-1.67-1.976-1.23 0-1.846.79-1.846 2.35v3.403h-2.546V8.663c0-1.56-.617-2.35-1.848-2.35-1.112 0-1.668.668-1.668 1.977v6.218H4.822V8.102c0-1.31.337-2.35 1.011-3.12.696-.77 1.608-1.164 2.74-1.164 1.311 0 2.302.5 2.962 1.498l.638 1.06.638-1.06c.66-.999 1.65-1.498 2.96-1.498 1.13 0 2.043.395 2.74 1.164.675.77 1.012 1.81 1.012 3.12z" />
     </svg>
   );
 }
 
-/** Eyou — official brand mark, masked to the monochrome text colour. */
-export function EyouIcon({ className }: { className?: string }) {
-  return <MaskedIcon src={BRAND_MARKS.eyou} className={className} title="Eyou" />;
+/**
+ * Eyou — official brand mark, inlined.
+ *
+ * Inlined rather than loaded as a remote <img> or CSS mask: only an inline
+ * path can inherit `currentColor`, which is what keeps this mark visually
+ * consistent with the other monochrome marks in the footer and social rows.
+ * The geometry is the canonical brand path and must not be redrawn.
+ */
+export function EyouIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 113 113"
+      fill="currentColor"
+      aria-hidden
+      className={cn("inline-block shrink-0", className)}
+      {...props}
+    >
+      {/* Source art is 113x106; nudge down to sit centred in a square box. */}
+      <g transform="translate(0 3.5)">
+        <path d="M112.4 86.2L85.1 97.4C84.2 86.3 76.3 67.1 69.2 59.7C65.6 76.9 52.1 93.7 40.4 105.9L17.6 83.1C28.1 77 45.2 67.9 52.1 55.5C34.3 57.5 15.9 52.6 0 45.4L13 14.4C25.1 25 39 36.1 56.9 37.8C55 32.3 47.7 21.8 43.4 17.3L60.7 0C64.6 6.2 70.1 26.5 70.4 34.3C78.1 28.5 100.2 18.8 111.1 17.2V44.2C104.6 43.4 84.4 45.2 79 47.1C88.4 52.6 103.7 68.4 109.5 79.8C110.4 81.7 111.5 84.1 112.5 86.3L112.4 86.2Z" />
+      </g>
+    </svg>
+  );
 }

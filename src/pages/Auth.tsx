@@ -1,101 +1,193 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearch } from "@tanstack/react-router";
 import { Link, useNavigate } from "@/lib/router-compat";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { authClientError, authClientLog, newCorrelationId } from "@/lib/correlation";
+
 import { toast } from "sonner";
+import { checkSigninGuard, recordSigninAttempt, lockoutMessage } from "@/lib/signin-guard";
+import { authFailureMessage, withAuthTimeout } from "@/lib/auth-timeout";
+
 import { AppLayout } from "@/components/layout/AppLayout";
-import { ArrowLeft, Fingerprint, KeyRound, Loader2, Mail, ShieldCheck } from "lucide-react";
+import { ArrowLeft, KeyRound, Loader2, Mail, MailCheck, ShieldCheck, UserPlus } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { MaskedIcon } from "@/components/MaskedIcon";
-import { PasswordField, isPasswordCompliant } from "@/components/PasswordField";
-import { BRAND_MARKS } from "@/lib/brand-marks";
+import { useI18n } from "@/lib/i18n";
+import { PasswordField } from "@/components/PasswordField";
+import { BRAND_ICONS } from "@/utils/brandIcons";
+import { getBootstrapState } from "@/lib/bootstrap.functions";
+import { resolvePostLoginPath } from "@/lib/post-login";
 import {
-  getBootstrapState,
-  checkHandleAvailability,
-  suggestHandleForName,
-  createTestSuperAdmin,
-} from "@/lib/bootstrap.functions";
-import { amIAdmin } from "@/lib/admin.functions";
-import { handleLengthMessage } from "@/lib/handle-rules";
-
-/** Monochrome provider marks — no single brand is allowed to dominate. */
-const MARKS: Record<string, string> = {
-  github:
-    "M12 2a10 10 0 00-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.15-1.1-1.46-1.1-1.46-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 015 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0012 2z",
-  gitlab:
-    "M12 21.4l3.7-11.4H8.3L12 21.4zM3 10l2-6 3.3 6H3zm18 0h-5.3L19 4l2 6zM3 10l9 11.4L6.7 10H3zm18 0h-3.7L12 21.4 21 10z",
-  apple:
-    "M16.4 12.9c0-2.4 2-3.6 2.1-3.6-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.6.9-.8 0-1.9-.9-3.1-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.9-2.3.9-1.3 1.3-2.5 1.3-2.6 0 0-2.4-.9-2.4-3.6zM14.3 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3z",
-  google:
-    "M12 11v3.2h5.3c-.2 1.4-1.6 4-5.3 4a5.7 5.7 0 010-11.4c1.7 0 2.9.7 3.6 1.4l2.5-2.4A9.1 9.1 0 0012 3a9 9 0 100 18c5.2 0 8.7-3.7 8.7-8.8 0-.6-.1-1-.2-1.4H12z",
-  oidc: "M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6l8-4zm0 2.2L6 7v5c0 3.8 2.5 6.7 6 7.8 3.5-1.1 6-4 6-7.8V7l-6-2.8zM12 8a3 3 0 110 6 3 3 0 010-6z",
-};
-
-type ProviderKey = "google" | "apple" | "github" | "gitlab" | "oidc";
+  requestMagicLink,
+  requestPasswordReset,
+  signInWithPassword as signInWithPasswordFn,
+  signUp as signUpFn,
+  verifyEmailCode as verifyEmailCodeFn,
+} from "@/lib/auth.functions";
+import { startMastodonLogin } from "@/lib/mastodon-auth.functions";
+import { normalizeInstance } from "@/lib/mastodon-instance";
+import { mastodonErrorMessage } from "@/lib/mastodon-auth.errors";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 /**
- * Auth tiles. `mark` is an inline path, `remote` an official asset that is CSS
- * masked so every logo renders in the single theme text colour.
+ * Officiële merkvectoren uit de harde merkkaart (`simple-icons`), zodat elke
+ * providerknop het echte logo in de echte merkkleur toont.
+ */
+const MARKS: Record<string, string> = {
+  github: BRAND_ICONS.github!.path,
+  gitlab: BRAND_ICONS.gitlab!.path,
+  google: BRAND_ICONS.google!.path,
+  oidc: BRAND_ICONS.oidc!.path,
+  mastodon: BRAND_ICONS.mastodon!.path,
+  keycloak: BRAND_ICONS.keycloak!.path,
+};
+
+/** Official multi-colour Google "G" — required by Google Identity branding. */
+function GoogleColorMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path
+        fill="#4285F4"
+        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 6-1.08 8-2.93l-3.88-3.05c-1.08.72-2.45 1.16-4.12 1.16-3.17 0-5.85-2.14-6.81-5.02H1.18v3.15C3.15 21.23 7.27 24 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.19 14.16c-.24-.72-.38-1.49-.38-2.28s.14-1.56.38-2.28V6.45H1.18C.43 7.94 0 9.91 0 12s.43 4.06 1.18 5.55l4.01-3.39z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.99 1.19 15.24 0 12 0 7.27 0 3.15 2.77 1.18 6.45l4.01 3.39c.96-2.88 3.64-5.09 6.81-5.09z"
+      />
+    </svg>
+  );
+}
+
+type ProviderKey = "google" | "github" | "gitlab" | "oidc";
+
+/**
+ * Auth-tegels. Elk `mark` is een geverifieerd inline pad met de officiële
+ * merkkleur, zodat de rij nooit leeg of vergrijsd rendert.
  */
 const TILES: {
   id: string;
   label: string;
   provider: ProviderKey;
-  mark?: string;
-  remote?: string;
+  mark: string;
+  color: string;
 }[] = [
-  { id: "github", label: "GitHub", provider: "github", mark: MARKS.github },
-  { id: "apple", label: "Apple", provider: "apple", mark: MARKS.apple },
-  { id: "google", label: "Google", provider: "google", mark: MARKS.google },
+  {
+    id: "github",
+    label: "GitHub",
+    provider: "github",
+    mark: MARKS.github!,
+    color: BRAND_ICONS.github!.color,
+  },
+  {
+    id: "google",
+    label: "Google",
+    provider: "google",
+    mark: MARKS.google!,
+    color: BRAND_ICONS.google!.color,
+  },
   {
     id: "mastodon",
     label: "Mastodon / Fediverse",
     provider: "gitlab",
-    remote: BRAND_MARKS.mastodon,
+    mark: MARKS.mastodon!,
+    color: BRAND_ICONS.mastodon!.color,
   },
   {
     id: "keycloak",
-    label: "Keycloak / Custom OIDC",
+    label: "Keycloak / OIDC",
     provider: "oidc",
-    remote: BRAND_MARKS.keycloak,
+    mark: MARKS.keycloak!,
+    color: BRAND_ICONS.keycloak!.color,
   },
-  { id: "gitlab", label: "GitLab", provider: "gitlab", mark: MARKS.gitlab },
+  {
+    id: "gitlab",
+    label: "GitLab",
+    provider: "gitlab",
+    mark: MARKS.gitlab!,
+    color: BRAND_ICONS.gitlab!.color,
+  },
 ];
+
 
 const PROVIDER_LABELS: Record<string, string> = {
   github: "GitHub",
-  apple: "Apple",
   google: "Google",
-  gitlab: "Mastodon / Fediverse",
+  gitlab: "GitLab",
   oidc: "Keycloak / Custom OIDC",
 };
 
+/** Deliberately permissive: catches typos, never rejects a valid address. */
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RESEND_COOLDOWN_SECONDS = 30;
+/** Minimum enforced server-side in `assertPassword`. */
+const MIN_PASSWORD_LENGTH = 10;
+/** Where the sign-in correlation id is kept across an OAuth round-trip. */
+const CID_STORAGE_KEY = "rout.auth.cid";
+
+type Mode = "magic" | "password" | "signup";
+
+/**
+ * Sign-in surface for the Neon-native auth layer.
+ *
+ * Everything on this page talks to our own server functions in
+ * `@/lib/auth.functions` — sessions are httpOnly cookies backed by
+ * `public.user_sessions` in Frankfurt. No third-party identity provider is
+ * involved; the only external flow left is the Fediverse handshake, which runs
+ * through our own server too.
+ */
 export default function Auth() {
+  const { t } = useI18n();
   const nav = useNavigate();
-  const { user } = useAuth();
-  const { mode, redirect } = useSearch({ from: "/auth" });
-  const [tab, setTab] = useState<"signin" | "signup">(mode === "signup" ? "signup" : "signin");
-  /** Magic link is the primary sign-in method; password is the fallback. */
-  const [method, setMethod] = useState<"magic" | "password">("magic");
+  const { user, refresh } = useAuth();
+  const { redirect } = useSearch({ from: "/auth" });
+
   const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [handle, setHandle] = useState("");
-  const [handleTouched, setHandleTouched] = useState(false);
-  const [handleState, setHandleState] = useState<{
-    checking: boolean;
-    ok: boolean | null;
-    reason?: string;
-  }>({ checking: false, ok: null });
+  const [mode, setMode] = useState<Mode>("magic");
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(0);
+  const [resending, setResending] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [needsFirstAdmin, setNeedsFirstAdmin] = useState(false);
-  const suggestTimer = useRef<number | undefined>(undefined);
-  const checkTimer = useRef<number | undefined>(undefined);
+  const [redirecting, setRedirecting] = useState(false);
+  const redirectStarted = useRef(false);
+
+  /** Fediverse sign-in: the instance domain is asked for in a small dialog. */
+  const [mastodonOpen, setMastodonOpen] = useState(false);
+  const [mastodonInstance, setMastodonInstance] = useState("");
+  const [mastodonError, setMastodonError] = useState<string | null>(null);
+  const [mastodonBusy, setMastodonBusy] = useState(false);
+
+  /** Dev-only diagnostics for the e-mail flows. */
+  const [authDebug, setAuthDebug] = useState<Record<string, unknown> | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+
+  /** Cooldown so an impatient double-tap cannot flood the mail queue. */
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
 
   useEffect(() => {
     let active = true;
@@ -107,198 +199,282 @@ export default function Auth() {
     };
   }, []);
 
-  useEffect(() => {
-    setTab(mode === "signup" ? "signup" : "signin");
-  }, [mode]);
-
-  /**
-   * Where to land after authentication: an explicit `?redirect=` wins, then the
-   * admin portal for administrators (the first account is auto-promoted),
-   * otherwise the normal dashboard.
-   */
-  const resolveDestination = async () => {
-    if (redirect) return redirect;
-    try {
-      const res = await amIAdmin({});
-      if (res.isAdmin) return "/admin";
-    } catch {
-      /* not an admin, or the probe failed — fall through */
-    }
-    return "/dashboard";
-  };
+  const resolveDestination = async () => resolvePostLoginPath(redirect);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || redirectStarted.current) return;
+    redirectStarted.current = true;
+    setRedirecting(true);
     let active = true;
-    void resolveDestination().then((to) => active && nav(to, { replace: true }));
+    console.info("[post-login:start] resolving destination for authenticated member");
+    void resolveDestination()
+      .then((to) => {
+        if (!active) return;
+        console.info(`[post-login:navigate] ${to}`);
+        nav(to, { replace: true });
+      })
+      .catch((error) => {
+        console.error("[post-login:unexpected-failure]", error);
+        if (active) nav("/dashboard", { replace: true });
+      });
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, nav, redirect]);
 
-  /** Full legal name → suggested free handle (debounced, server-side dedup). */
-  const onNameChange = (value: string) => {
-    setName(value);
-    if (handleTouched) return;
-    window.clearTimeout(suggestTimer.current);
-    if (value.trim().length < 3) return;
-    suggestTimer.current = window.setTimeout(async () => {
-      try {
-        const res = await suggestHandleForName({ data: { fullName: value } });
-        setHandle(res.handle);
-        setHandleState({ checking: false, ok: true });
-      } catch {
-        /* suggestion is best-effort */
-      }
-    }, 400);
-  };
-
   /**
-   * Length rules are enforced instantly on the client so the message can never
-   * contradict a slower server answer; only 5+ character handles are probed for
-   * availability (debounced by 300 ms).
+   * Correlation id of the attempt in progress. One id per attempt, echoed in
+   * every client and server log line, so a single sign-in can be traced
+   * end-to-end in the runtime logs.
    */
-  const onHandleChange = (value: string) => {
-    setHandle(value);
-    setHandleTouched(true);
-    window.clearTimeout(checkTimer.current);
-
-    if (!value.trim()) {
-      setHandleState({ checking: false, ok: null });
-      return;
+  const cidRef = useRef<string>("");
+  const beginAttempt = (method: string) => {
+    const cid = newCorrelationId();
+    cidRef.current = cid;
+    try {
+      sessionStorage.setItem(CID_STORAGE_KEY, cid);
+    } catch {
+      /* private mode — tracing degrades, sign-in does not */
     }
-
-    const lengthIssue = handleLengthMessage(value);
-    if (lengthIssue) {
-      setHandleState({ checking: false, ok: false, reason: lengthIssue });
-      return;
-    }
-
-    setHandleState({ checking: true, ok: null });
-    checkTimer.current = window.setTimeout(async () => {
-      try {
-        const res = await checkHandleAvailability({ data: { handle: value } });
-        setHandleState({ checking: false, ok: res.ok, reason: res.reason });
-      } catch {
-        setHandleState({ checking: false, ok: null, reason: "Check failed." });
-      }
-    }, 300);
+    authClientLog("attempt_started", cid, { method, origin: window.location.origin });
+    return cid;
   };
 
-  const createDevAdmin = async () => {
+  /** Final gate before any auth request leaves the browser. */
+  const emailAccepted = () => {
+    if (EMAIL_REGEX.test(email.trim())) return true;
+    const message = t("auth.email.invalid");
+    setEmailError(message);
+    toast.error(message);
+    return false;
+  };
+
+  const reportAuthError = (error: unknown, scope: string) => {
+    const err = error as { message?: string; code?: string; name?: string };
+    authClientError("attempt_failed", cidRef.current || "cid_unknown", {
+      scope,
+      code: err?.code ?? null,
+    });
+    console.error(`[auth:${scope}]`, error);
+    toast.error(err?.message || t("auth.toast.failed"), { duration: 8000 });
+    setAuthDebug({
+      scope,
+      cid: cidRef.current || null,
+      at: new Date().toISOString(),
+      origin: typeof window !== "undefined" ? window.location.origin : null,
+      name: err?.name ?? null,
+      code: err?.code ?? null,
+      message: err?.message ?? String(error),
+    });
+  };
+
+  /** Magic link: the server mails a one-time token to /auth/verify. */
+  const continueWithEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailAccepted()) return;
     setLoading(true);
+    const cid = beginAttempt("magic-link");
+    const address = email.trim().toLowerCase();
     try {
-      const res = await createTestSuperAdmin({});
-      if (!res.ok) {
-        toast.error(res.reason ?? "Could not create the test admin.");
-        return;
-      }
-      const { error } = await supabase.auth.signInWithPassword({
-        email: res.email,
-        password: res.password,
-      });
-      if (error) return toast.error(error.message);
-      toast.success(`Test super admin ready — ${res.email}`);
-      nav("/admin", { replace: true });
+      const guard = await checkSigninGuard(address);
+      if (guard.locked) return toast.error(lockoutMessage(guard.retryAfter));
+      await withAuthTimeout(requestMagicLink({ data: { email: address } }), "requestMagicLink");
+      authClientLog("magic_link_sent", cid, {});
+      setSentTo(address);
+      setResendIn(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      reportAuthError(err, "magic-link");
+      toast.error(authFailureMessage(err, t("auth.toast.signinFailed")));
     } finally {
       setLoading(false);
     }
   };
 
-  const signIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) return toast.error(error.message);
-    toast.success("Welcome back");
-    nav("/dashboard");
+  const resend = async () => {
+    if (!sentTo || resendIn > 0 || resending) return;
+    setResending(true);
+    try {
+      await withAuthTimeout(requestMagicLink({ data: { email: sentTo } }), "requestMagicLink:resend");
+      setResendIn(RESEND_COOLDOWN_SECONDS);
+      toast.success(t("auth.toast.newCode"));
+    } catch (err) {
+      toast.error(authFailureMessage(err, t("auth.toast.resendFailed")));
+    } finally {
+      setResending(false);
+    }
   };
 
+  /** Second half of e-mail sign-in: the 6-digit code from the same mail. */
+  const submitCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sentTo || code.replace(/\D/g, "").length !== 6) return;
+    setCodeBusy(true);
+    try {
+      const result = await withAuthTimeout(
+        verifyEmailCodeFn({ data: { email: sentTo, code } }),
+        "verifyEmailCode",
+      );
+      if (!result.ok) return toast.error(result.message);
+      toast.success(t("auth.toast.signedIn"));
+      await refresh();
+    } catch (err) {
+      reportAuthError(err, "email-code");
+      toast.error(authFailureMessage(err, t("auth.toast.signinFailed")));
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
+  const signInWithPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailAccepted()) return;
+    setLoading(true);
+    beginAttempt("password");
+    const address = email.trim().toLowerCase();
+    try {
+      // Brute-force guard: keyed on an anonymous hash of the address, never the
+      // address itself, an IP or a user agent.
+      const guard = await checkSigninGuard(address);
+      if (guard.locked) return toast.error(lockoutMessage(guard.retryAfter));
+
+      const result = await withAuthTimeout(
+        signInWithPasswordFn({ data: { email: address, password } }),
+        "signInWithPassword",
+      );
+      const after = await recordSigninAttempt(address, result.ok);
+      if (!result.ok) {
+        return toast.error(after.locked ? lockoutMessage(after.retryAfter) : result.message);
+      }
+      toast.success(t("auth.toast.welcome"));
+      await refresh();
+    } catch (err) {
+      reportAuthError(err, "password");
+      toast.error(authFailureMessage(err, t("auth.toast.signinFailed")));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Explicit account creation with a password; a confirmation mail follows. */
   const signUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!emailAccepted()) return;
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return toast.error(`Gebruik minstens ${MIN_PASSWORD_LENGTH} tekens.`);
+    }
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: name, handle: handle.trim().replace(/^@/, "").toLowerCase() },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-    setLoading(false);
-    if (error) return toast.error(error.message);
-    toast.success("Account created — check your email if confirmation is required.");
-  };
-
-  const magicLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
-    setLoading(false);
-    if (error) return toast.error(error.message);
-    toast.success("Magic link sent — check your inbox.");
+    beginAttempt("signup");
+    try {
+      const result = await withAuthTimeout(
+        signUpFn({ data: { email: email.trim().toLowerCase(), password } }),
+        "signUp",
+      );
+      if (!result.ok) return toast.error(result.message);
+      toast.success(t("auth.toast.welcome"));
+      await refresh();
+    } catch (err) {
+      reportAuthError(err, "signup");
+      toast.error(authFailureMessage(err, t("auth.toast.signinFailed")));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resetPassword = async () => {
-    if (!email) return toast.error("Enter your e-mail address first.");
+    if (!email) return toast.error(t("auth.toast.emailFirst"));
+    if (!emailAccepted()) return;
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/settings`,
-    });
-    setLoading(false);
-    if (error) return toast.error(error.message);
-    toast.success("Password reset link sent — check your inbox.");
-  };
-
-  const oauth = async (provider: "google" | "apple" | "github" | "gitlab" | "oidc") => {
-    if (provider === "github" || provider === "gitlab" || provider === "oidc") {
-      toast.info(
-        `${PROVIDER_LABELS[provider]} login is not available yet on this backend — use a passkey, Apple or e-mail.`,
-      );
-      return;
-    }
-    setLoading(true);
-    const r = await lovable.auth.signInWithOAuth(provider, {
-      redirect_uri: `${window.location.origin}/auth/callback`,
-    });
-    if (r.error) {
+    try {
+      await requestPasswordReset({ data: { email: email.trim().toLowerCase() } });
+      toast.success(t("auth.toast.resetSent"));
+    } catch (err) {
+      reportAuthError(err, "password-reset");
+    } finally {
       setLoading(false);
-      toast.error(r.error.message || "Sign-in failed");
-      return;
     }
-    if (r.redirected) return;
-    nav("/dashboard");
   };
 
-  const passkey = async () => {
-    if (typeof window === "undefined" || !("PublicKeyCredential" in window)) {
-      return toast.error("This device or browser does not support passkeys.");
+  /** Fediverse: normalize locally, then let the server register + authorize. */
+  const startMastodon = async () => {
+    const instance = normalizeInstance(mastodonInstance);
+    if (!instance) {
+      setMastodonError(mastodonErrorMessage("invalid_instance"));
+      return;
     }
-    toast.info("Passkeys are rolling out — sign in with a magic link for now.");
-    setMethod("magic");
+    setMastodonBusy(true);
+    setMastodonError(null);
+    try {
+      const cid = beginAttempt("mastodon");
+      const { url } = await startMastodonLogin({
+        data: { instance, cid, ...(redirect ? { next: redirect } : {}) },
+      });
+      authClientLog("mastodon_redirecting", cid, { instance });
+      window.location.assign(url);
+    } catch (e) {
+      setMastodonBusy(false);
+      setMastodonError(e instanceof Error && e.message ? e.message : mastodonErrorMessage("unknown"));
+    }
+  };
+
+  /**
+   * Google and GitHub run through our own server routes under
+   * /api/auth/*: the browser leaves for the provider and comes back with
+   * the same httpOnly session cookie a password sign-in produces. The remaining
+   * tiles are not wired to the Neon auth layer and say so.
+   */
+  const oauth = (tileId: string, provider: ProviderKey) => {
+    if (tileId === "google" || tileId === "github" || tileId === "gitlab") {
+      const next = redirect ? `?next=${encodeURIComponent(redirect)}` : "";
+      window.location.assign(`/api/auth/${tileId}${next}`);
+      return;
+    }
+    toast.info(t("auth.toast.providerUnavailable", { name: PROVIDER_LABELS[provider] }));
+  };
+
+  const onEmailChange = (value: string) => {
+    setEmail(value);
+    setEmailError(value && !EMAIL_REGEX.test(value.trim()) ? t("auth.email.invalid") : null);
   };
 
   const emailField = (
     <div className="space-y-1">
       <Label htmlFor="auth-email" className="text-sm">
-        Email
+        {t("auth.email.label")}
       </Label>
       <Input
         id="auth-email"
         type="email"
         value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        onChange={(e) => onEmailChange(e.target.value)}
         placeholder="you@domain.com"
-        className="h-10 rounded-lg"
+        autoComplete="email"
+        aria-invalid={emailError ? true : undefined}
+        aria-describedby={emailError ? "auth-email-error" : undefined}
+        className={`h-10 rounded-lg ${emailError ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
         required
       />
+      {emailError && (
+        <p id="auth-email-error" className="text-[11px] text-destructive">
+          {emailError}
+        </p>
+      )}
     </div>
   );
+
+  if (user || redirecting) {
+    return (
+      <AppLayout>
+        <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4">
+          <div className="flex min-h-44 w-full max-w-md items-center justify-center rounded-2xl border border-border bg-card">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Account wordt geopend…
+            </p>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -308,238 +484,329 @@ export default function Auth() {
             to="/"
             className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
           >
-            <ArrowLeft className="h-4 w-4" /> Back
+            <ArrowLeft className="h-4 w-4" /> {t("auth.back")}
           </Link>
         </div>
         {needsFirstAdmin && (
           <div className="mb-3 w-full max-w-md border border-foreground bg-muted p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide">Setup mode</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              No administrator exists yet. The <strong>first account created here</strong> is
-              automatically promoted to Super Admin and gets access to <code>/admin</code>.
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wide">{t("auth.setup.title")}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{t("auth.setup.body")}</p>
           </div>
         )}
         <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 sm:p-7">
           <div className="mb-4">
-            <h1 className="mb-1 font-display text-2xl text-foreground">
-              {tab === "signup" ? "Create your account" : "Welcome back"}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Sovereign authentication: biometric passkeys, passwordless magic links or open
-              protocols.
-            </p>
+            <h1 className="mb-1 font-display text-2xl text-foreground">{t("auth.title")}</h1>
+            <p className="text-sm text-muted-foreground">{t("auth.subtitle")}</p>
           </div>
 
-          {/* Primary sovereign action */}
-          <button
-            type="button"
-            onClick={passkey}
-            disabled={loading}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <Fingerprint className="h-4 w-4" aria-hidden />
-            Sign in with Passkey
-          </button>
-          <p className="mt-1 text-center text-[11px] text-muted-foreground">
-            Fingerprint, face or hardware key — nothing leaves your device.
-          </p>
+          {import.meta.env.DEV && (
+            <details className="mb-3 rounded-xl border border-dashed border-border bg-muted/40 p-3 text-[11px]">
+              <summary className="cursor-pointer font-medium">Auth debug (dev only)</summary>
+              <p className="mt-2 break-all text-muted-foreground">
+                origin: <code>{hydrated ? window.location.origin : "—"}</code>
+              </p>
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-muted-foreground">
+                {authDebug ? JSON.stringify(authDebug, null, 2) : "No auth errors yet."}
+              </pre>
+            </details>
+          )}
 
           {/* Secondary connectors — equal weight, all masked to one colour */}
-          <div data-testid="auth-provider-tiles" className="mt-3.5 grid grid-cols-6 gap-2">
+          <div
+            data-testid="auth-provider-tiles"
+            className="mt-1 grid grid-cols-3 gap-2 sm:grid-cols-5"
+          >
             {TILES.map((tile) => (
               <button
                 key={tile.id}
                 type="button"
-                onClick={() => oauth(tile.provider)}
+                onClick={() =>
+                  tile.id === "mastodon"
+                    ? (setMastodonError(null), setMastodonOpen(true))
+                    : oauth(tile.id, tile.provider)
+                }
                 disabled={loading}
-                aria-label={`Continue with ${tile.label}`}
-                title={`Continue with ${tile.label}`}
-                className="flex h-10 items-center justify-center rounded-xl border border-border/50 p-2 text-foreground transition-colors hover:bg-muted/50 disabled:opacity-60"
+                aria-label={`Verder met ${tile.label}`}
+                title={`Verder met ${tile.label}`}
+                className="group flex h-11 items-center justify-center gap-2 rounded-xl border border-border/60 bg-card/60 p-2 transition-all hover:border-border hover:bg-muted/50 disabled:opacity-60"
               >
-                {tile.remote ? (
-                  <MaskedIcon src={tile.remote} className="h-4 w-4" />
+                {tile.id === "google" ? (
+                  <GoogleColorMark className="h-[18px] w-[18px] shrink-0" />
                 ) : (
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <svg
+                    className="h-[18px] w-[18px] shrink-0"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    style={{ color: tile.color }}
+                    aria-hidden
+                  >
                     <path d={tile.mark} />
                   </svg>
                 )}
+                <span className="sr-only">{`Verder met ${tile.label}`}</span>
               </button>
             ))}
           </div>
 
+
+          <Dialog open={mastodonOpen} onOpenChange={(o) => !mastodonBusy && setMastodonOpen(o)}>
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>{t("auth.fedi.title")}</DialogTitle>
+                <DialogDescription>{t("auth.fedi.desc")}</DialogDescription>
+              </DialogHeader>
+              <form
+                className="space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void startMastodon();
+                }}
+              >
+                <div className="space-y-1.5">
+                  <Label htmlFor="mastodon-instance">{t("auth.fedi.instance")}</Label>
+                  <Input
+                    id="mastodon-instance"
+                    autoFocus
+                    autoComplete="url"
+                    placeholder="mastodon.social"
+                    value={mastodonInstance}
+                    onChange={(e) => {
+                      setMastodonInstance(e.target.value);
+                      setMastodonError(null);
+                    }}
+                    disabled={mastodonBusy}
+                  />
+                  {mastodonError && <p className="text-xs text-destructive">{mastodonError}</p>}
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={mastodonBusy} className="w-full">
+                    {mastodonBusy ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("auth.fedi.connecting")}
+                      </>
+                    ) : (
+                      t("auth.fedi.continue")
+                    )}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
           <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
-            <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden /> Mastodon and Keycloak cover the
-            Fediverse and self-hosted SSO (Authentik, Keycloak, Authelia).
+            <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden /> {t("auth.sso.note")}
           </p>
 
           <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-              or use email
+              {t("auth.divider")}
             </span>
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="signin">Sign in</TabsTrigger>
-              <TabsTrigger value="signup">Sign up</TabsTrigger>
-            </TabsList>
+          {sentTo ? (
+            <div
+              data-testid="auth-link-sent"
+              className="mx-auto w-full max-w-sm space-y-5 overflow-hidden rounded-2xl border border-border bg-card/60 p-4 text-center sm:p-6"
+            >
+              <div className="space-y-2">
+                <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-border bg-muted/60">
+                  <MailCheck className="h-5 w-5" aria-hidden />
+                </span>
+                <h2 className="font-display text-lg">{t("auth.sent.title")}</h2>
+                <p className="mx-auto max-w-[16rem] text-[13px] leading-relaxed text-muted-foreground sm:max-w-xs">
+                  {t("auth.sent.body1")}{" "}
+                  <strong className="font-medium text-foreground">{sentTo}</strong>
+                  {t("auth.sent.body2")}
+                </p>
+              </div>
 
-            <div className="mt-3.5 min-h-[220px] transition-opacity duration-150">
-              <TabsContent value="signin" className="mt-0">
-                {method === "magic" ? (
-                  <form onSubmit={magicLink} className="space-y-3.5">
-                    {emailField}
-                    <Button
-                      type="submit"
-                      className="h-11 w-full rounded-lg font-medium"
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Mail className="mr-2 h-4 w-4" /> ✉️ Send Magic Link
-                        </>
-                      )}
-                    </Button>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Passwordless: we mail you a one-time sign-in link.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setMethod("password")}
-                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                    >
-                      <KeyRound className="h-3.5 w-3.5" aria-hidden /> Sign in with password instead
-                    </button>
-                  </form>
-                ) : (
-                  <form onSubmit={signIn} className="space-y-3.5">
-                    {emailField}
-                    <div className="space-y-1">
-                      <Label htmlFor="auth-password" className="text-sm">
-                        Password
-                      </Label>
-                      <Input
-                        id="auth-password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="h-10 rounded-lg"
-                        required
-                        minLength={6}
-                      />
-                      <button
-                        type="button"
-                        onClick={resetPassword}
-                        className="text-[11px] text-muted-foreground mt-1 underline underline-offset-4 hover:text-foreground"
-                      >
-                        Forgot password?
-                      </button>
-                    </div>
-                    <Button
-                      type="submit"
-                      className="h-11 w-full rounded-lg font-medium"
-                      disabled={loading}
-                    >
-                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => setMethod("magic")}
-                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                    >
-                      <Mail className="h-3.5 w-3.5" aria-hidden /> Use a magic link instead
-                    </button>
-                  </form>
-                )}
-              </TabsContent>
+              <form onSubmit={submitCode} className="space-y-3">
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  aria-label={t("auth.otp.aria")}
+                  className="mx-auto h-12 max-w-40 rounded-xl text-center font-mono text-xl tracking-[0.4em]"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="w-full max-w-40 rounded-full"
+                  disabled={codeBusy || code.length !== 6}
+                >
+                  {codeBusy ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden />{" "}
+                      {t("auth.resend.sending")}
+                    </>
+                  ) : (
+                    t("auth.password.signin")
+                  )}
+                </Button>
+              </form>
 
-              <TabsContent value="signup" className="mt-0">
-                <form onSubmit={signUp} className="space-y-3.5">
-                  <div className="space-y-1">
-                    <Label htmlFor="signup-name" className="text-sm">
-                      Full name
-                    </Label>
-                    <Input
-                      id="signup-name"
-                      value={name}
-                      onChange={(e) => onNameChange(e.target.value)}
-                      className="h-10 rounded-lg"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="signup-handle" className="text-sm">
-                      Your handle
-                    </Label>
-                    <Input
-                      id="signup-handle"
-                      value={handle}
-                      onChange={(e) => onHandleChange(e.target.value)}
-                      placeholder="jane.doe"
-                      className="h-10 rounded-lg"
-                      aria-invalid={handleState.ok === false}
-                      aria-describedby="signup-handle-msg"
-                    />
-                    <p
-                      id="signup-handle-msg"
-                      aria-live="polite"
-                      className={`text-[11px] ${
-                        handleState.ok === false ? "text-destructive" : "text-muted-foreground"
-                      }`}
-                    >
-                      {handleState.checking
-                        ? "Checking availability…"
-                        : handleState.ok === true
-                          ? `rout.be/@${handle} is available`
-                          : (handleState.reason ?? `rout.be/@${handle || "your.handle"}`)}
-                    </p>
-                  </div>
-                  {emailField}
-
-                  <PasswordField value={password} onChange={setPassword} required minLength={8} />
-
+              <div className="space-y-4 border-t border-border/70 pt-5">
+                <div className="flex flex-col items-center gap-2">
                   <Button
-                    type="submit"
-                    className="h-11 w-full rounded-lg font-medium"
-                    disabled={
-                      loading ||
-                      !isPasswordCompliant(password) ||
-                      handleState.ok !== true ||
-                      handleLengthMessage(handle) !== null
-                    }
-                  >
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create account"}
-                  </Button>
-                  <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                    By creating an account you agree to our{" "}
-                    <Link to="/terms" className="underline underline-offset-4">
-                      Terms
-                    </Link>{" "}
-                    and{" "}
-                    <Link to="/privacy" className="underline underline-offset-4">
-                      Privacy Policy
-                    </Link>
-                    .
-                  </p>
-                </form>
-                {import.meta.env.DEV ? (
-                  <button
                     type="button"
-                    onClick={createDevAdmin}
-                    disabled={loading}
-                    data-testid="dev-admin-login"
-                    className="mt-3 w-full text-[11px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                    variant="outline"
+                    size="sm"
+                    onClick={resend}
+                    className="w-full max-w-40 rounded-full"
+                    disabled={resending || resendIn > 0}
+                    aria-live="polite"
                   >
-                    Dev Admin Quick Login
-                  </button>
-                ) : null}
-              </TabsContent>
+                    {resending ? (
+                      <>
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden />{" "}
+                        {t("auth.resend.sending")}
+                      </>
+                    ) : resendIn > 0 ? (
+                      <span className="tabular-nums">{t("auth.resend.in", { s: resendIn })}</span>
+                    ) : (
+                      t("auth.resend.cta")
+                    )}
+                  </Button>
+                  {resendIn > 0 && (
+                    <span
+                      aria-hidden
+                      className="h-[3px] w-full max-w-40 overflow-hidden rounded-full bg-muted"
+                    >
+                      <span
+                        className="block h-full rounded-full bg-foreground/50 transition-[width] duration-1000 ease-linear"
+                        style={{ width: `${(1 - resendIn / RESEND_COOLDOWN_SECONDS) * 100}%` }}
+                      />
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSentTo(null)}
+                  className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  {t("auth.other")}
+                </button>
+              </div>
             </div>
-          </Tabs>
+          ) : mode === "password" ? (
+            <form onSubmit={signInWithPassword} className="space-y-3.5">
+              {emailField}
+              <PasswordField value={password} onChange={setPassword} required minLength={8} />
+              <Button
+                type="submit"
+                className="h-11 w-full rounded-lg font-medium"
+                disabled={loading || !!emailError}
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t("auth.password.signin")}
+              </Button>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMode("magic")}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  <Mail className="h-3.5 w-3.5" aria-hidden /> {t("auth.password.magic")}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetPassword}
+                  className="text-[11px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  {t("auth.password.forgot")}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMode("signup")}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              >
+                <UserPlus className="h-3.5 w-3.5" aria-hidden /> Account aanmaken
+              </button>
+            </form>
+          ) : mode === "signup" ? (
+            <form onSubmit={signUp} className="space-y-3.5">
+              {emailField}
+              <PasswordField
+                value={password}
+                onChange={setPassword}
+                required
+                minLength={MIN_PASSWORD_LENGTH}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Minstens {MIN_PASSWORD_LENGTH} tekens. Je krijgt een bevestigingsmail.
+              </p>
+              <Button
+                type="submit"
+                data-testid="auth-signup"
+                className="h-11 w-full rounded-lg font-medium"
+                disabled={loading || !!emailError}
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Account aanmaken"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setMode("magic")}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              >
+                <Mail className="h-3.5 w-3.5" aria-hidden /> {t("auth.password.magic")}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={continueWithEmail} className="space-y-3.5">
+              {emailField}
+              <Button
+                type="submit"
+                data-testid="auth-continue"
+                className="h-11 w-full rounded-lg font-medium"
+                disabled={loading || !!emailError}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("auth.continue.sending")}
+                  </>
+                ) : (
+                  <>
+                    <Mail className="mr-2 h-4 w-4" /> {t("auth.continue.cta")}
+                  </>
+                )}
+              </Button>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {t("auth.continue.note")}
+              </p>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setMode("password")}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden /> {t("auth.havePassword")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  <UserPlus className="h-3.5 w-3.5" aria-hidden /> Account aanmaken
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {t("auth.terms.prefix")}{" "}
+                <Link to="/terms" className="underline underline-offset-4">
+                  {t("auth.terms.terms")}
+                </Link>{" "}
+                {t("auth.terms.and")}{" "}
+                <Link to="/privacy" className="underline underline-offset-4">
+                  {t("auth.terms.privacy")}
+                </Link>
+                .
+              </p>
+            </form>
+          )}
         </div>
       </div>
     </AppLayout>

@@ -8,7 +8,7 @@ import {
   useParams as useTanstackParams,
   useRouterState,
 } from "@tanstack/react-router";
-import { forwardRef, type AnchorHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useCallback, type AnchorHTMLAttributes, type ReactNode } from "react";
 
 type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
   to: string;
@@ -51,14 +51,21 @@ export type { NavLinkProps };
 
 export function useNavigate() {
   const navigate = useTanstackNavigate();
-  return (to: string | number, options?: { replace?: boolean }) => {
-    if (typeof to === "number") {
-      if (typeof window !== "undefined") window.history.go(to);
-      return;
-    }
-    navigate({ to, replace: options?.replace } as never);
-  };
+  // Must be referentially stable: components list it in effect dependency
+  // arrays, and a fresh function on every render re-runs those effects
+  // forever (endless re-fetch loops).
+  return useCallback(
+    (to: string | number, options?: { replace?: boolean }) => {
+      if (typeof to === "number") {
+        if (typeof window !== "undefined") window.history.go(to);
+        return;
+      }
+      navigate({ to, replace: options?.replace } as never);
+    },
+    [navigate],
+  );
 }
+
 
 export function useParams<T extends Record<string, string | undefined>>(): T {
   return useTanstackParams({ strict: false } as never) as T;
