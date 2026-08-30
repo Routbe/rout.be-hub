@@ -1,22 +1,36 @@
 import { createFileRoute } from "@tanstack/react-router";
-import Index from "@/pages/Index";
+import Page from "@/pages/Index";
+import { HostProfile } from "@/pages/HostProfile";
+import { getRequestLocale } from "@/lib/locale.functions";
+import { resolveHostProfile } from "@/lib/domain-routing.functions";
+import { OG_IMAGE, canonicalLinks, jsonLdScript, socialMeta } from "@/lib/social-meta";
 
 export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "ROUT — Indie QR Code Studio" },
-      {
-        name: "description",
-        content:
-          "Create print-ready QR codes with custom styling, frames, SEPA/IBAN payments and scan analytics. Free and fast.",
-      },
-      { property: "og:title", content: "ROUT — Indie QR Code Studio" },
-      {
-        property: "og:description",
-        content:
-          "Print-ready QR codes with granular styling, frames, IBAN payments and scan analytics.",
-      },
-    ],
+  loader: async () => {
+    const [locale, host] = await Promise.all([
+      getRequestLocale().catch(() => ({ locale: "en" as const })),
+      resolveHostProfile().catch(() => ({ handle: null as string | null })),
+    ]);
+    return { ...locale, hostHandle: host.handle };
+  },
+  head: ({ loaderData }) => ({
+    meta: socialMeta(loaderData?.locale ?? "en", `https://rout.be${OG_IMAGE}`),
+    links: canonicalLinks("/"),
+    scripts: jsonLdScript({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "ROUT",
+      url: "https://rout.be",
+      inLanguage: loaderData?.locale ?? "en",
+      publisher: { "@type": "Organization", name: "ROUT", url: "https://rout.be" },
+    }),
   }),
-  component: Index,
+  component: HomeRoute,
 });
+
+/** Op een gekoppeld eigen domein toont "/" het profiel van die eigenaar. */
+function HomeRoute() {
+  const { hostHandle } = Route.useLoaderData();
+  if (hostHandle) return <HostProfile handle={hostHandle} />;
+  return <Page />;
+}

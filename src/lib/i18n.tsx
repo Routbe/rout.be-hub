@@ -19,7 +19,17 @@ export type Locale = "nl" | "en" | "fr" | "de";
 
 export const LOCALES: Locale[] = ["nl", "en", "fr", "de"];
 
+export const LOCALE_LABELS: Record<Locale, string> = {
+  nl: "Nederlands",
+  en: "English",
+  fr: "Français",
+  de: "Deutsch",
+};
+
 export const STORAGE_KEY = "rout_lang";
+
+/** Same name as the storage key so client and server read one source of truth. */
+export const COOKIE_KEY = "rout_lang";
 
 const RESOURCES = {
   en: { translation: en },
@@ -28,17 +38,43 @@ const RESOURCES = {
   de: { translation: de },
 } as const;
 
-function isLocale(value: unknown): value is Locale {
+export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (LOCALES as string[]).includes(value);
 }
 
+function readCookieLocale(): Locale | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${COOKIE_KEY}=([^;]*)`));
+  const value = match?.[1] ? decodeURIComponent(match[1]) : null;
+  return isLocale(value) ? value : null;
+}
+
+function writeCookieLocale(locale: Locale) {
+  if (typeof document === "undefined") return;
+  const oneYear = 60 * 60 * 24 * 365;
+  document.cookie = `${COOKIE_KEY}=${locale}; path=/; max-age=${oneYear}; samesite=lax`;
+}
+
+/** Persist the choice in both the cookie and localStorage (best effort). */
+export function persistLocale(locale: Locale) {
+  writeCookieLocale(locale);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, locale);
+  } catch {
+    /* storage unavailable — the cookie still carries the choice */
+  }
+}
+
 /**
- * Language resolution order: explicit choice in localStorage, then the browser
- * language (Dutch/Flemish wins for `nl`), then English. URLs stay clean — the
+ * Language resolution order: explicit choice (cookie, then localStorage), then
+ * the browser or system language (Dutch/Flemish wins for `nl`), then English as
+ * the international default. URLs stay flat and language-independent — the
  * locale never appears as a path prefix.
  */
 export function detectLocale(): Locale {
-  if (typeof window === "undefined") return "nl";
+  if (typeof window === "undefined") return "en";
+  const cookie = readCookieLocale();
+  if (cookie) return cookie;
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (isLocale(stored)) return stored;
@@ -56,13 +92,37 @@ export function detectLocale(): Locale {
   return "en";
 }
 
+/** True when the visitor already made an explicit choice on this device. */
+export function hasExplicitLocale(): boolean {
+  if (typeof window === "undefined") return false;
+  if (readCookieLocale()) return true;
+  try {
+    return isLocale(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Last-resort fallback: when a key exists in no language file at all, render a
+ * humanised version of the final segment instead of a raw technical key.
+ */
+function humaniseKey(key: string): string {
+  const leaf = key.split(".").pop() ?? key;
+  const words = leaf.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 if (!i18next.isInitialized) {
   void i18next.init({
     resources: RESOURCES,
-    lng: "nl",
-    fallbackLng: "en",
+    lng: "en",
+    // English first, Dutch second: a missing FR/DE string never shows a key.
+    fallbackLng: ["en", "nl"],
     interpolation: { escapeValue: false },
     returnNull: false,
+    returnEmptyString: false,
+    parseMissingKeyHandler: (key) => humaniseKey(key),
   });
 }
 
@@ -71,7 +131,9 @@ export { i18next as i18n };
 interface I18nValue {
   locale: Locale;
   setLocale: (l: Locale) => void;
-  t: (key: string) => string;
+  /** Applies a locale without persisting it (used for account-driven sync). */
+  applyLocale: (l: Locale) => void;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 const I18nContext = createContext<I18nValue | null>(null);
@@ -83,16 +145,18 @@ export function I18nProvider({
   children: ReactNode;
   initialLocale?: Locale;
 }) {
-  const [locale, setLocaleState] = useState<Locale>(initialLocale ?? "nl");
+  const [locale, setLocaleState] = useState<Locale>(initialLocale ?? "en");
 
   const setLocale = useCallback((l: Locale) => {
     setLocaleState(l);
     void i18next.changeLanguage(l);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, l);
-    } catch {
-      /* storage unavailable — in-memory locale still applies */
-    }
+    persistLocale(l);
+  }, []);
+
+  /** Apply a locale coming from the account without overwriting the device choice. */
+  const applyLocale = useCallback((l: Locale) => {
+    setLocaleState(l);
+    void i18next.changeLanguage(l);
   }, []);
 
   // Detect once on mount unless a route pinned the locale explicitly.
@@ -106,9 +170,16 @@ export function I18nProvider({
     document.documentElement.lang = locale;
   }, [locale]);
 
-  const t = useCallback((key: string) => i18next.getFixedT(locale)(key) as string, [locale]);
+  const t = useCallback(
+    (key: string, params?: Record<string, unknown>) =>
+      i18next.getFixedT(locale)(key, params ?? {}) as string,
+    [locale],
+  );
 
-  const value = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t]);
+  const value = useMemo(
+    () => ({ locale, setLocale, applyLocale, t }),
+    [locale, setLocale, applyLocale, t],
+  );
 
   return (
     <I18nextProvider i18n={i18next}>
@@ -122,9 +193,10 @@ export function useI18n(): I18nValue {
   if (ctx) return ctx;
   // Safe fallback so components stay usable outside the provider.
   return {
-    locale: (i18next.language as Locale) ?? "nl",
+    locale: (i18next.language as Locale) ?? "en",
     setLocale: () => {},
-    t: (k) => i18next.t(k) as string,
+    applyLocale: () => {},
+    t: (k, params) => i18next.t(k, params ?? {}) as string,
   };
 }
 

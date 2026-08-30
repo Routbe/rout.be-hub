@@ -24,18 +24,35 @@ import {
 } from "lucide-react";
 import { BlueskyIcon, MastodonIcon } from "@/components/SocialIcons";
 import { cn } from "@/lib/utils";
+import { lookupBrandIcon } from "@/utils/brandIcons";
 
 export type PlatformIcon = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>;
 
-/** Brand marks lucide does not ship — kept monochrome so they adapt to the theme. */
-function svg(path: string): PlatformIcon {
-  return function BrandMark(props) {
+/**
+ * Brand marks lucide does not ship. Components are cached per path so the same
+ * platform always yields the exact same component identity — React then patches
+ * the existing node instead of unmounting and remounting the icon on rerender.
+ */
+/**
+ * Brand marks lucide does not ship. Components are cached per path so the same
+ * platform always yields the exact same component identity — React patches the
+ * existing node instead of remounting the icon on every rerender.
+ */
+const MARK_CACHE = new Map<string, PlatformIcon>();
+
+function svg(path: string, viewBox = "0 0 24 24"): PlatformIcon {
+  const cacheKey = `${viewBox}|${path}`;
+  const cached = MARK_CACHE.get(cacheKey);
+  if (cached) return cached;
+  function BrandMark(props: SVGProps<SVGSVGElement>) {
     return (
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <svg viewBox={viewBox} fill="currentColor" aria-hidden {...props}>
         <path d={path} />
       </svg>
     );
-  };
+  }
+  MARK_CACHE.set(cacheKey, BrandMark);
+  return BrandMark;
 }
 
 const XIcon = svg(
@@ -52,6 +69,14 @@ const SignalIcon = svg(
 );
 const WhatsappIcon = svg(
   "M12.04 2C6.6 2 2.2 6.4 2.2 11.85c0 1.9.5 3.7 1.45 5.3L2 22l5-1.6a9.8 9.8 0 0 0 5.04 1.38h.01c5.44 0 9.85-4.4 9.85-9.85S17.48 2 12.04 2Zm0 18a8.1 8.1 0 0 1-4.15-1.14l-.3-.18-3.06.98.99-2.98-.2-.31a8.1 8.1 0 1 1 6.72 3.63Zm4.5-5.9c-.24-.13-1.46-.72-1.68-.8-.23-.09-.4-.13-.56.12-.16.25-.64.8-.78.97-.15.16-.29.18-.53.06-.25-.12-1.05-.39-2-1.23a7.5 7.5 0 0 1-1.38-1.72c-.15-.25-.02-.38.1-.5.11-.11.25-.29.37-.44.13-.15.17-.25.25-.42.09-.16.05-.31-.02-.43-.06-.13-.55-1.35-.76-1.84-.2-.48-.4-.41-.55-.42h-.48c-.16 0-.43.06-.65.31-.23.25-.85.83-.85 2.03s.87 2.35.99 2.51c.12.17 1.71 2.61 4.14 3.66.58.25 1.03.4 1.38.51.58.19 1.11.16 1.53.1.47-.07 1.45-.6 1.66-1.17.2-.58.2-1.07.14-1.18-.06-.1-.22-.16-.46-.28Z",
+);
+// Canoniek eYou-merkpad uit public/img/brand/eyou.svg (113×106 viewBox).
+const EyouIcon = svg(
+  "M112.4 86.2L85.1 97.4C84.2 86.3 76.3 67.1 69.2 59.7C65.6 76.9 52.1 93.7 40.4 105.9L17.6 83.1C28.1 77 45.2 67.9 52.1 55.5C34.3 57.5 15.9 52.6 0 45.4L13 14.4C25.1 25 39 36.1 56.9 37.8C55 32.3 47.7 21.8 43.4 17.3L60.7 0C64.6 6.2 70.1 26.5 70.4 34.3C78.1 28.5 100.2 18.8 111.1 17.2V44.2C104.6 43.4 84.4 45.2 79 47.1C88.4 52.6 103.7 68.4 109.5 79.8C110.4 81.7 111.5 84.1 112.5 86.3L112.4 86.2Z",
+  "0 0 113 106",
+);
+const WsocialIcon = svg(
+  "M1.2 3.4h4.1l3 11.1 3-11.1h3.4l3 11.1 3-11.1h4.1l-5.1 17.2h-4.1L12 9.9 9.4 20.6H5.3L1.2 3.4Z",
 );
 const DiscordIcon = svg(
   "M20.3 4.4A19 19 0 0 0 15.6 3l-.24.44c1.6.4 2.34.96 3.13 1.66a11.5 11.5 0 0 0-9.5-.34l-.5.34c.84-.74 1.8-1.3 3.13-1.66L11.4 3a19 19 0 0 0-4.7 1.4C3.7 8.8 2.9 13.1 3.3 17.3A19.2 19.2 0 0 0 9 20.2l.9-1.6c-.98-.36-1.9-.82-2.7-1.42l.6-.44a13.6 13.6 0 0 0 11.4 0l.6.44c-.8.6-1.72 1.06-2.7 1.42l.9 1.6a19.2 19.2 0 0 0 5.7-2.9c.5-4.86-.83-9.13-3.4-12.9ZM9.2 14.9c-1.1 0-2-1-2-2.3 0-1.26.88-2.3 2-2.3s2.02 1.04 2 2.3c0 1.27-.88 2.3-2 2.3Zm5.6 0c-1.1 0-2-1-2-2.3 0-1.26.88-2.3 2-2.3s2.02 1.04 2 2.3c0 1.27-.88 2.3-2 2.3Z",
@@ -72,6 +97,8 @@ const HOST_MAP: [RegExp, PlatformIcon][] = [
   [/(^|\.)(wa\.me|whatsapp\.com)$/, WhatsappIcon],
   [/(^|\.)discord\.(gg|com)$/, DiscordIcon],
   [/(^|\.)twitch\.tv$/, Twitch],
+  [/(^|\.)eyou\.social$/, EyouIcon],
+  [/(^|\.)w\.social$|(^|\.)wsocial\./, WsocialIcon],
   [/mastodon|fosstodon|mstdn|social\.|pixelfed/, MastodonIcon],
 ];
 
@@ -88,8 +115,10 @@ const NAME_MAP: Record<string, PlatformIcon> = {
   mastodon: MastodonIcon,
   fediverse: MastodonIcon,
   pixelfed: MastodonIcon,
-  eyou: MastodonIcon,
-  wsocial: MastodonIcon,
+  eyou: EyouIcon,
+  "eyou.social": EyouIcon,
+  wsocial: WsocialIcon,
+  "w.social": WsocialIcon,
   matrix: MatrixIcon,
   element: MatrixIcon,
   youtube: Youtube,
@@ -141,6 +170,11 @@ export function getSocialPlatformIcon(urlOrName: string): PlatformIcon {
   const raw = (urlOrName ?? "").trim();
   if (!raw) return LinkIcon;
 
+  // 0 — Harde merkkaart eerst: een bekend platform krijgt altijd zijn eigen
+  // officiële vector, nooit een generiek icoon.
+  const brand = lookupBrandIcon(raw);
+  if (brand) return svg(brand.path, brand.viewBox);
+
   // 1 — URL form: match on hostname so query strings never confuse the parser.
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
   let host = "";
@@ -166,12 +200,35 @@ export function getSocialPlatformIcon(urlOrName: string): PlatformIcon {
   // 3 — A fediverse handle (@user@domain) still resolves to Mastodon.
   if (/^@?[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(raw)) return MastodonIcon;
 
-  // 4 — Anything else that looks like a destination is a generic site.
-  return host || raw.includes(".") ? Globe : LinkIcon;
+  // 4 — Onbekende bestemming: een net link-symbool, geen wereldbol voor iets
+  // dat op een sociaal netwerk lijkt. Alleen kale websites krijgen de globe.
+  return /^(https?:\/\/)?[^@\s]+\.[a-z]{2,}(\/|$)/i.test(raw) && !raw.includes("@")
+    ? Globe
+    : LinkIcon;
 }
 
-/** Flat-UI icon renderer: monochrome, theme-adaptive, fixed dimensions. */
-export function SocialPlatformIcon({ source, className }: { source: string; className?: string }) {
+/**
+ * Merkicoon-renderer. Bekende platformen renderen in hun officiële merkkleur;
+ * onbekende bronnen blijven neutraal en volgen het thema.
+ */
+export function SocialPlatformIcon({
+  source,
+  className,
+  monochrome = false,
+}: {
+  source: string;
+  className?: string;
+  /** Forceert themakleur in plaats van de merkkleur. */
+  monochrome?: boolean;
+}) {
   const Icon = getSocialPlatformIcon(source);
-  return <Icon className={cn("h-5 w-5 shrink-0 text-foreground", className)} aria-hidden />;
+  const brand = monochrome ? null : lookupBrandIcon(source);
+  return (
+    <Icon
+      className={cn("h-5 w-5 shrink-0", brand ? "" : "text-foreground", className)}
+      style={brand ? { color: brand.color } : undefined}
+      aria-hidden
+    />
+  );
 }
+

@@ -2,6 +2,11 @@
  * ROUT Profile & Link Hub — data model for the public rout.be/@handle page.
  * Kept deliberately small: handle + identity + an ordered list of blocks.
  */
+import { handleRuleMessage, type HandleRuleContext } from "./handle-rules";
+import type { PublicSocialLink } from "./social-verify";
+import { verifiedHandleError } from "./verified-handle";
+
+
 
 export interface ProfileBlock {
   id: string;
@@ -9,7 +14,31 @@ export interface ProfileBlock {
   label: string;
   value: string;
   hidden?: boolean;
+  /** Promo/featured: badgetekst zoals "🔥 NIEUW" of "⚡ 20% KORTING". */
+  badge?: string;
+  /** Promo/featured: ISO-datum waarop de actie afloopt (aftelklok). */
+  expiresAt?: string;
 }
+
+/** Kant-en-klare badges voor het promo/featured-component. */
+export const PROMO_BADGE_PRESETS = [
+  "🔥 NIEUW",
+  "⚡ 20% KORTING",
+  "🎙️ LAATSTE AFLEVERING",
+  "⏳ TIJDELIJK",
+  "🎁 CADEAU",
+] as const;
+
+/** Copy-voorzetjes zodat de titel actiegericht blijft. */
+export const PROMO_COPY_PRESETS = [
+  "Lees mijn nieuwste blog over…",
+  "Claim 10% korting op…",
+  "Beluister aflevering #…",
+  "Bekijk mijn nieuwste aanbod",
+] as const;
+
+export const isPromoBlock = (kind: string) => kind === "promo";
+
 
 export interface ProfileRecord {
   id: string;
@@ -29,6 +58,21 @@ export interface ProfileRecord {
   show_email_publicly?: boolean;
   forwarding_email?: string | null;
   custom_domain?: string | null;
+  created_at?: string | null;
+  /** Moment waarop de verificatie is geactiveerd (blauwe badge-popover). */
+  verified_at?: string | null;
+  /** Weergavevoorkeuren (badge, watermerk, achtergrond) — zie profile-display.ts. */
+  display_prefs?: unknown;
+  verified_legal_name?: string | null;
+  /**
+   * Geverifieerde sociale accounts met gecachte volgeraantallen. Deze data komt
+   * uitsluitend uit onze database (`social_links`), nooit uit een externe API
+   * tijdens het laden van de profielpagina.
+   */
+  social_links?: PublicSocialLink[];
+  /** Totaal bereik-badge: gecacht totaal over alle sociale accounts. */
+  show_total_reach?: boolean;
+  total_reach_count?: number;
 }
 
 export type ProfileTier = "free" | "early_believer";
@@ -44,7 +88,7 @@ export interface PaymentMethodOption {
 export const EARLY_BELIEVER_CENTS = 399;
 
 /** Optional recurring "Keep ROUT Alive" add-ons on top of the one-time fee. */
-export type DonationPlan = "none" | "monthly" | "yearly";
+export type DonationPlan = "none" | "one_time" | "monthly" | "yearly";
 
 export const DONATION_PLANS: {
   id: DonationPlan;
@@ -60,8 +104,22 @@ export const DONATION_PLANS: {
     cents: 0,
     interval: null,
   },
-  { id: "monthly", label: "+ €1.00 / month", note: "Supporter", cents: 100, interval: "month" },
-  { id: "yearly", label: "+ €5.00 / year", note: "Annual Boost", cents: 500, interval: "year" },
+  {
+    id: "one_time",
+    label: "One-off extra",
+    note: "From €1.00 extra",
+    cents: 100,
+    interval: null,
+  },
+  { id: "monthly", label: "€1.00 / month", note: "Minimum — set your own", cents: 100, interval: "month" },
+  {
+    id: "yearly",
+    label: "€12.00 / year",
+    note: "Minimum — set your own",
+    cents: 1200,
+    interval: "year",
+  },
+
 ];
 
 /** Verification tiers — price in cents, one-off. */
@@ -161,19 +219,39 @@ export const RESERVED_HANDLES = [
   "webhooks",
   "null",
   "undefined",
+  // Top-level app routes — a handle here would shadow a real page in the
+  // clean `rout.be/<handle>` namespace.
+  "claim",
+  "studio",
+  "contact",
+  "manifesto",
+  "sovereignty",
+  "self-hosting",
+  "signature",
+  "email-templates",
+  "iban-qr",
+  "vcard-qr",
+  "wifi-qr",
+  "s",
+  "dev",
 ];
 
 export const isReservedHandle = (h: string) => RESERVED_HANDLES.includes(h);
 
-/** Public path for a profile: paid namespace when verified, /u/@ otherwise. */
+/**
+ * Public path for a profile: eigen namespace bij verificatie, anders `/u/`.
+ * Zonder `@` — de routes accepteren beide vormen, maar we tonen en delen de
+ * schone variant (`rout.be/u/jona`).
+ */
 export const profilePath = (username: string, verified?: boolean) =>
-  verified ? `/@${username}` : `/u/@${username}`;
+  verified ? `/${username}` : `/u/${username}`;
+
 
 /** Block catalogue used by the “+ Add block” drawer, grouped in folders. */
 export const BLOCK_KINDS: {
   kind: string;
   label: string;
-  category: "featured" | "socials" | "web" | "finance" | "media" | "contact";
+  category: "featured" | "socials" | "web" | "finance" | "media" | "contact" | "layout";
   placeholder: string;
   /** Turns a handle into a full URL. */
   base?: string;
@@ -585,7 +663,139 @@ export const BLOCK_KINDS: {
   },
   { kind: "shop", label: "Shop", category: "contact", placeholder: "https://shop.rout.be" },
   { kind: "link", label: "Eigen link", category: "contact", placeholder: "https://…" },
+  // Interactieve widgets: deze renderen als kaart op het profiel i.p.v. als link.
+  {
+    kind: "newsletter",
+    label: "Nieuwsbrief (inschrijfformulier)",
+    category: "web",
+    placeholder: "Blijf op de hoogte",
+  },
+  {
+    kind: "calendar",
+    label: "Afspraak boeken (Cal.com / Calendly)",
+    category: "web",
+    placeholder: "https://cal.com/jouwnaam/30min",
+  },
+  {
+    kind: "booking_request",
+    label: "Booking / Afspraak (ROUT native)",
+    category: "contact",
+    placeholder: "Plan een afspraak / gesprek",
+  },
+  {
+    kind: "media_gallery",
+    label: "Galerij / Media (ROUT native)",
+    category: "media",
+    placeholder: "Mijn galerij",
+  },
+  {
+    kind: "media_embed",
+    label: "Video, Muziek & Documenten",
+    category: "media",
+    placeholder: "Plak een YouTube-, Spotify- of PDF-link…",
+  },
+  {
+    kind: "contact_form",
+    label: "Contactformulier / E-mailcapture (ROUT native)",
+    category: "contact",
+    placeholder: "Neem contact op",
+  },
+  {
+    kind: "live_poll",
+    label: "Interactieve poll",
+    category: "web",
+    placeholder: "Welk project moet ik eerst bouwen?",
+  },
+  {
+    kind: "faq_accordion",
+    label: "FAQ / Veelgestelde vragen",
+    category: "layout",
+    placeholder: "Veelgestelde vragen",
+  },
+  {
+    kind: "map_embed",
+    label: "Locatie & kaart",
+    category: "contact",
+    placeholder: "Grote Markt, Brussel",
+  },
+  {
+    kind: "event_list",
+    label: "Evenementen / Agenda (ROUT native)",
+    category: "web",
+    placeholder: "Aankomende evenementen",
+  },
+  {
+    kind: "promo",
+    label: "Promo / Featured link",
+    category: "contact",
+    placeholder: "https://…",
+  },
+
+  // Layout-elementen: geen link, alleen visuele structuur op het profiel.
+  {
+    kind: "text",
+    label: "Tekstblok",
+    category: "layout",
+    placeholder: "Schrijf een korte tekst…",
+  },
+  {
+    kind: "spacer",
+    label: "Spacer / witruimte",
+    category: "layout",
+    placeholder: "",
+  },
+
 ];
+
+/**
+ * Curated “+ Add component” tabs: vier high-value groepen bovenop de
+ * klassieke categorieën. Elke tab wijst naar bestaande block kinds.
+ */
+export const BLOCK_TABS: {
+  id: string;
+  label: string;
+  description: string;
+  kinds: string[];
+}[] = [
+  {
+    id: "standard",
+    label: "⚡ Standaard & Embeds",
+    description: "Smart links, universele embeds en opmaak",
+    kinds: ["link", "website", "media_embed", "media_gallery", "text", "spacer", "youtube", "spotify", "soundcloud"],
+  },
+  {
+    id: "sovereign",
+    label: "🌐 Soeverein & Sociaal",
+    description: "Fediverse, socials en eigen kanalen",
+    kinds: ["eyou", "wsocial", "bluesky", "mastodon", "matrix", "signal", "pixelfed", "substack", "instagram", "tiktok", "x", "github"],
+  },
+  {
+    id: "microapps",
+    label: "🧰 Native Micro-apps",
+    description: "Boekingen, contact en e-mailcapture",
+    kinds: [
+      "booking_request",
+      "contact_form",
+      "event_list",
+      "live_poll",
+      "faq_accordion",
+      "map_embed",
+      "calendar",
+      "calcom",
+      "calendly",
+      "vcard",
+      "newsletter",
+    ],
+
+  },
+  {
+    id: "commerce",
+    label: "💳 Commerce & Donaties",
+    description: "Tips, donaties en productshowcases",
+    kinds: ["kofi", "bmac", "patreon", "opencollective", "paypal", "stripe", "tikkie", "shop", "promo"],
+  },
+];
+
 
 export const BLOCK_CATEGORIES = [
   { id: "featured", label: "Soeverein & Fediverse" },
@@ -594,6 +804,7 @@ export const BLOCK_CATEGORIES = [
   { id: "finance", label: "Financiën" },
   { id: "media", label: "Media & gaming" },
   { id: "contact", label: "Contact & utilities" },
+  { id: "layout", label: "Layout & tekst" },
 ] as const;
 
 /**
@@ -690,6 +901,8 @@ export const PROFILE_THEMES: {
   text: string;
   muted: string;
   border: string;
+  /** Accentkleur voor neon-knoppen en mesh-achtergronden. */
+  accent?: string;
 }[] = [
   {
     id: "noir",
@@ -699,6 +912,7 @@ export const PROFILE_THEMES: {
     text: "#f5f5f5",
     muted: "#a3a3a3",
     border: "#2a2a2a",
+    accent: "#e5e5e5",
   },
   {
     id: "papier",
@@ -708,6 +922,7 @@ export const PROFILE_THEMES: {
     text: "#1c1917",
     muted: "#78716c",
     border: "#e3ded5",
+    accent: "#1c1917",
   },
   {
     id: "midnight",
@@ -717,6 +932,7 @@ export const PROFILE_THEMES: {
     text: "#eef2ff",
     muted: "#94a3b8",
     border: "#22304d",
+    accent: "#6366f1",
   },
   {
     id: "forest",
@@ -726,6 +942,7 @@ export const PROFILE_THEMES: {
     text: "#ecfdf5",
     muted: "#8faca0",
     border: "#22382c",
+    accent: "#10b981",
   },
   {
     id: "terracotta",
@@ -735,6 +952,67 @@ export const PROFILE_THEMES: {
     text: "#2b1a12",
     muted: "#8a6b5c",
     border: "#ecd9cd",
+    accent: "#c2703f",
+  },
+  {
+    id: "mocha",
+    label: "Mocha",
+    bg: "#1b1310",
+    card: "#2a1e19",
+    text: "#f6ece3",
+    muted: "#bda695",
+    border: "#3b2b23",
+    accent: "#c08457",
+  },
+  {
+    id: "slate",
+    label: "Slate",
+    bg: "#f1f5f9",
+    card: "#ffffff",
+    text: "#0f172a",
+    muted: "#64748b",
+    border: "#dbe3ec",
+    accent: "#3b82f6",
+  },
+  {
+    id: "emerald",
+    label: "Emerald Glass",
+    bg: "#04211a",
+    card: "#0b3328",
+    text: "#e6fff6",
+    muted: "#8fc7b3",
+    border: "#12513f",
+    accent: "#34d399",
+  },
+  {
+    id: "cyberpunk",
+    label: "Cyberpunk",
+    bg: "#0a0a0f",
+    card: "#15121f",
+    text: "#f4f2ff",
+    muted: "#9d95c7",
+    border: "#2b2440",
+    accent: "#a855f7",
+  },
+  {
+    id: "arctic",
+    label: "Arctic Frost",
+    bg: "#f2f8fd",
+    card: "#ffffff",
+    text: "#0b2434",
+    muted: "#5f7f92",
+    border: "#d7e7f2",
+    accent: "#38bdf8",
+  },
+  {
+    id: "sunset",
+    label: "Sunset Gold",
+    bg: "#17120d",
+    card: "#241a12",
+    text: "#fdf3e3",
+    muted: "#c4a884",
+    border: "#3a2a1c",
+    accent: "#f59e0b",
   },
 ];
 
@@ -742,6 +1020,9 @@ export const CARD_STYLES = [
   { id: "bordered", label: "Bordered" },
   { id: "solid", label: "Solid flat" },
   { id: "pill", label: "Pill" },
+  { id: "sharp", label: "Sharp" },
+  { id: "glass", label: "Glass" },
+  { id: "neon", label: "Neon glow" },
 ] as const;
 
 export const themeOf = (id: string) => PROFILE_THEMES.find((t) => t.id === id) ?? PROFILE_THEMES[0];
@@ -752,30 +1033,44 @@ export function normalizeHandle(raw: string): string {
     .trim()
     .replace(/^@+/, "")
     .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/[^a-z0-9._-]/g, "-")
     .replace(/-{2,}/g, "-")
-    .replace(/^-|-$/g, "")
+    .replace(/^[._-]+|[._-]+$/g, "")
     .slice(0, 30);
 }
 
-/** Minimum handle length — prevents namespace squatting on 1–4 char handles. */
+/** Minimum handle length — 5 characters is the platform-wide floor. */
 export const HANDLE_MIN_LENGTH = 5;
 export const HANDLE_MAX_LENGTH = 30;
 
-export const HANDLE_RULE = "5–30 characters · lowercase letters, numbers and hyphens";
+export const HANDLE_RULE = "5–30 characters · lowercase letters, numbers and . - _";
 
-export const isValidHandle = (h: string) => /^[a-z0-9](?:[a-z0-9-]{3,28}[a-z0-9])$/.test(h);
+/** Tier-aware hint shown under the handle input. */
+export function handleRuleHint(ctx: HandleRuleContext = {}): string {
+  return ctx.tier === "verified"
+    ? "5–30 characters · lowercase letters, numbers and . - _ · must stay traceable to your legal name (e.g. j.delplanche)"
+    : "Free handle: 5–30 characters with at least 2 numbers (e.g. jona26) · lowercase letters, numbers and . - _";
+}
+
+export const isValidHandle = (h: string) => /^[a-z0-9](?:[a-z0-9._-]{3,28}[a-z0-9])$/.test(h);
 
 /** Human-readable reason a handle is unusable, or null when it is valid. */
-export function handleIssue(h: string): string | null {
+export function handleIssue(h: string, ctx: HandleRuleContext = {}): string | null {
   if (!h) return "Choose a handle to claim your namespace.";
-  if (h.length < HANDLE_MIN_LENGTH)
-    return `Handles must be at least ${HANDLE_MIN_LENGTH} characters long.`;
+  const ruleIssue = handleRuleMessage(h, ctx);
+  if (ruleIssue) return ruleIssue;
   if (h.length > HANDLE_MAX_LENGTH)
     return `Handles can be at most ${HANDLE_MAX_LENGTH} characters long.`;
   if (isReservedHandle(h)) return "That handle is reserved by the system.";
   if (!isValidHandle(h))
-    return "Use lowercase letters, numbers and hyphens; start and end with a letter or number.";
+    return "Use lowercase letters, numbers and the separators . - _ ; start and end with a letter or number.";
+  // Geverifieerde identiteit: de handle IS de naamstructuur (voornaam +
+  // achternaam, één deel mag een initiaal zijn). Ook de privacy-modus ontsnapt
+  // hier niet aan — het blauwe vinkje hangt aan die naam.
+  if (ctx.tier === "verified" && ctx.legalName) {
+    const structural = verifiedHandleError(h, ctx.legalName);
+    if (structural) return structural;
+  }
   return null;
 }
 
@@ -793,7 +1088,19 @@ export function blockHref(block: ProfileBlock): string {
     case "evm":
       return `https://etherscan.io/address/${raw}`;
     case "wifi":
+    case "newsletter":
+    case "booking_request":
+    case "media_gallery":
+    case "media_embed":
+    case "contact_form":
+    case "live_poll":
+    case "faq_accordion":
+    case "map_embed":
+    case "event_list":
       return "";
+
+    case "calendar":
+      return raw.startsWith("http") ? raw : `https://${raw.replace(/^\/+/, "")}`;
     case "phone":
       return `tel:${raw.replace(/[^\d+]/g, "")}`;
     case "whatsapp":
@@ -807,6 +1114,20 @@ export function blockHref(block: ProfileBlock): string {
     }
   }
 }
+
+/** Blokken die als interactieve widget renderen i.p.v. als gewone linkknop. */
+export const isWidgetBlock = (kind: string) =>
+  kind === "newsletter" ||
+  kind === "calendar" ||
+  kind === "booking_request" ||
+  kind === "media_gallery" ||
+  kind === "media_embed" ||
+  kind === "contact_form" ||
+  kind === "live_poll" ||
+  kind === "faq_accordion" ||
+  kind === "map_embed" ||
+  kind === "event_list";
+
 
 export const newBlockId = () =>
   `b_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;

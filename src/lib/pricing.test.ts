@@ -26,9 +26,10 @@ describe("Early Believer pricing", () => {
 });
 
 describe("Keep ROUT Alive donation plans", () => {
-  it("offers none / €1 monthly / €5 yearly", () => {
-    expect(DONATION_PLANS.map((p) => p.id)).toEqual(["none", "monthly", "yearly"]);
-    expect(DONATION_PLAN_CENTS).toEqual({ none: 0, monthly: 100, yearly: 500 });
+  it("offers none / €1 monthly / €12 yearly minimums", () => {
+    expect(DONATION_PLANS.map((p) => p.id)).toEqual(["none", "one_time", "monthly", "yearly"]);
+    expect(DONATION_PLAN_CENTS).toEqual({ none: 0, one_time: 100, monthly: 100, yearly: 1200 });
+    expect(DONATION_PLAN_INTERVAL.one_time).toBeNull();
     expect(DONATION_PLAN_INTERVAL.monthly).toBe("month");
     expect(DONATION_PLAN_INTERVAL.yearly).toBe("year");
     expect(DONATION_PLAN_INTERVAL.none).toBeNull();
@@ -43,6 +44,7 @@ describe("Keep ROUT Alive donation plans", () => {
 
   it("falls back to no donation for unknown values", () => {
     expect(normalizeDonationPlan("weekly")).toBe("none");
+    expect(normalizeDonationPlan("one_time")).toBe("one_time");
     expect(normalizeDonationPlan(null)).toBe("none");
     expect(normalizeDonationPlan("yearly")).toBe("yearly");
   });

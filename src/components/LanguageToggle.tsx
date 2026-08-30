@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useI18n, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useLanguagePreference } from "@/hooks/useLanguagePreference";
 
 const OPTIONS: { id: Locale; label: string }[] = [
   { id: "nl", label: "NL" },
@@ -10,7 +11,9 @@ const OPTIONS: { id: Locale; label: string }[] = [
 ];
 
 export function LanguageToggle({ className }: { className?: string }) {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, t } = useI18n();
+  // Switching here persists to the device cookie and, when signed in, to the account.
+  const { save: setLocale } = useLanguagePreference();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
   /** Roving focus: arrow keys move + select, Home/End jump to the edges. */
@@ -27,7 +30,7 @@ export function LanguageToggle({ className }: { className?: string }) {
     event.preventDefault();
     const option = OPTIONS[next];
     if (!option) return;
-    setLocale(option.id);
+    void setLocale(option.id);
     refs.current[next]?.focus();
   }
 
@@ -54,7 +57,7 @@ export function LanguageToggle({ className }: { className?: string }) {
               refs.current[index] = el;
             }}
             onKeyDown={(e) => onKeyDown(e, index)}
-            onClick={() => setLocale(id)}
+            onClick={() => void setLocale(id)}
             className={cn(
               "inline-flex h-7 px-2.5 items-center justify-center rounded-full text-[11px] font-medium tracking-wide transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",

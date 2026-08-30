@@ -23,6 +23,9 @@ export interface QrStyleSnapshot {
   frameId: string | null;
   frameLabel: string;
   frameFont: string;
+  /** Print the short link as readable text under the QR. */
+  captionEnabled: boolean;
+  captionText: string;
 }
 
 export interface QrStylePreset {
@@ -48,6 +51,8 @@ export const DEFAULT_SNAPSHOT: QrStyleSnapshot = {
   frameId: null,
   frameLabel: "",
   frameFont: "sans",
+  captionEnabled: false,
+  captionText: "",
 };
 
 export const FACTORY_PRESETS: QrStylePreset[] = [
@@ -125,6 +130,8 @@ export function normalizeSnapshot(input: unknown): QrStyleSnapshot {
     frameId: typeof input.frameId === "string" ? input.frameId : null,
     frameLabel: str("frameLabel", ""),
     frameFont: str("frameFont", "sans"),
+    captionEnabled: input.captionEnabled === true,
+    captionText: str("captionText", ""),
   };
 }
 

@@ -539,6 +539,49 @@
   }
 }
 
+/* Dunne, luxe scrollbar die netjes binnen de preview blijft. */
+/* Scrollbaar zonder zichtbare balk — voor mockup-previews (telefoon/laptop). */
+@utility preview-noscroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+
+  &::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
+
+@utility scrollbar-slim {
+
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, currentColor 22%, transparent) transparent;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in oklab, currentColor 20%, transparent);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, currentColor 35%, transparent);
+  }
+}
+
+
 input:focus,
 textarea:focus,
 input:focus-visible,
@@ -547,3 +590,120 @@ textarea:focus-visible {
   box-shadow: none;
   border-color: hsl(var(--accent) / 0.5);
 }
+
+/*
+ * Horizontal chip carousels on mobile: fade the trailing edge so a peeking chip
+ * reads as "scroll for more" instead of looking clipped by the viewport.
+ */
+@utility edge-fade-x {
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 1.75rem), transparent 100%);
+
+  @media (width >= 48rem) {
+    mask-image: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Design system primitives
+   One scale for spacing, type and interactive surfaces so every
+   screen composes from the same handful of decisions.
+   ───────────────────────────────────────────────────────────── */
+
+@theme {
+  --spacing-section: 4rem;
+  --spacing-section-lg: 6rem;
+  --spacing-gutter: 1rem;
+}
+
+/* Vertical rhythm for a full-width page section. */
+@utility section-y {
+  padding-block: 2.5rem;
+
+  @media (width >= 48rem) {
+    padding-block: 4rem;
+  }
+}
+
+/* Type scale — display for headings, sans for prose. */
+@utility text-display-1 {
+  font-family: var(--font-display, inherit);
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+@utility text-display-2 {
+  font-family: var(--font-display, inherit);
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+@utility text-eyebrow {
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Consistent interactive sizing: 44px min target on touch. */
+@utility tap-target {
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+}
+
+/*
+ * Accessibility: keyboard users must always see where they are. Inputs above
+ * suppress their outline for aesthetics, so restore an explicit, high-contrast
+ * ring for every focusable element reached by keyboard.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: calc(var(--radius) - 0.25rem);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+  border-color: hsl(var(--ring));
+}
+
+/* Respect reduced-motion for every decorative animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------- avatarkaders (24 presets) */
+@keyframes rout-frame-pulse {
+  0%, 100% { filter: brightness(1) saturate(1); }
+  50% { filter: brightness(1.25) saturate(1.35); }
+}
+@keyframes rout-frame-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes rout-frame-flicker {
+  0%, 100% { filter: brightness(1); }
+  35% { filter: brightness(1.3); }
+  55% { filter: brightness(0.92); }
+  75% { filter: brightness(1.18); }
+}
+@keyframes rout-frame-shimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.rout-frame-pulse { animation: rout-frame-pulse 2.4s ease-in-out infinite; }
+.rout-frame-spin > svg { animation: rout-frame-spin 14s linear infinite; }
+.rout-frame-flicker { animation: rout-frame-flicker 2s ease-in-out infinite; }
+.rout-frame-shimmer { animation: rout-frame-shimmer 6s ease-in-out infinite; }

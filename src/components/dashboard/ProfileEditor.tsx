@@ -1,4 +1,6 @@
+import { QrCode } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { SocialPlatformIcon } from "@/lib/social-icons";
 import {
   ArrowDown,
@@ -9,9 +11,12 @@ import {
   Copy,
   Eye,
   Folder,
+  Globe,
   GripVertical,
   Link2,
   Loader2,
+  Lock,
+
   Palette,
   Plus,
   Search,
@@ -20,6 +25,8 @@ import {
   Trash2,
   Upload,
   X,
+  Smartphone,
+  Monitor,
 } from "lucide-react";
 import {
   AreaChart,
@@ -31,6 +38,8 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Input } from "@/components/ui/input";
+import { VerifiedBadgeCard } from "@/components/dashboard/VerifiedBadgeCard";
+import { SocialSharingCard } from "@/components/dashboard/SocialSharingCard";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
@@ -42,15 +51,34 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FileUploadInput } from "@/components/FileUploadInput";
-import { supabase } from "@/integrations/supabase/client";
+import { AvatarUpload } from "@/components/settings/AvatarUpload";
+
 import { useAuth } from "@/hooks/useAuth";
+import { useUrlStyle } from "@/hooks/useUrlStyle";
+import { useIdentitySpace } from "@/hooks/useIdentitySpace";
+
+import { effectiveUrlStyle, styledProfilePath, type UrlStyle } from "@/lib/profile-url";
+import {
+  AVATAR_FRAMES,
+  BACKGROUND_STYLES,
+  BADGE_NAME_FORMATS,
+  BADGE_TYPES,
+  BANNER_STYLES,
+  DEFAULT_DISPLAY_PREFS,
+  NAME_ACCENTS,
+  TYPOGRAPHY_STYLES,
+  formatBadgeName,
+  parseDisplayPrefs,
+  type ProfileDisplayPrefs,
+} from "@/lib/profile-display";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   BLOCK_CATEGORIES,
   BLOCK_KINDS,
+  BLOCK_TABS,
   CARD_STYLES,
-  HANDLE_RULE,
+  handleRuleHint,
   HANDLE_MIN_LENGTH,
   handleIssue,
   PROFILE_THEMES,
@@ -58,39 +86,83 @@ import {
   brandOf,
   isValidHandle,
   isReservedHandle,
+  isPromoBlock,
   newBlockId,
+  PROMO_BADGE_PRESETS,
+  PROMO_COPY_PRESETS,
   normalizeHandle,
-  profilePath,
   type ProfileBlock,
   type ProfileRecord,
+  themeOf,
 } from "@/lib/profile";
+import { ConversionCoach } from "@/components/dashboard/ConversionCoach";
+import { DesignTabEditor } from "@/components/dashboard/DesignTabEditor";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { AvatarFramePicker } from "@/components/studio/AvatarFramePicker";
+import { VERIFIED_STRUCTURE_MESSAGE } from "@/lib/verified-handle";
+import { VerifiedHandleBuilder } from "@/components/settings/VerifiedHandleBuilder";
+import { FavoritesEditor } from "@/components/dashboard/FavoritesEditor";
+import { MAX_FAVORITES } from "@/lib/favorites";
+import { FaviconUploader } from "@/components/studio/FaviconUploader";
+import { VisitEffectPicker } from "@/components/studio/VisitEffectPicker";
+import { avatarFrameLabel } from "@/lib/avatar-frames";
 import { ProfileView } from "@/components/profile/ProfileView";
 import { VerificationPanel } from "@/components/dashboard/VerificationPanel";
+import { DonationPanel } from "@/components/dashboard/DonationPanel";
+import {
+  checkStudioHandle,
+  getStudioAnalytics,
+  getStudioProfile,
+  saveStudioProfile,
+} from "@/lib/studio-profile.functions";
 import { SubdomainPanel } from "@/components/dashboard/SubdomainPanel";
 import { BadgesPanel } from "@/components/dashboard/BadgesPanel";
+import { SocialVerifyPanel } from "@/components/dashboard/SocialVerifyPanel";
+import { TotalReachButton } from "@/components/dashboard/TotalReachModal";
+import { ReferralPanel } from "@/components/dashboard/ReferralPanel";
+import { ReferralAnalytics } from "@/components/dashboard/ReferralAnalytics";
+import { BadgeActivityPanel } from "@/components/dashboard/BadgeActivityPanel";
 import { EmailForwardingPanel } from "@/components/dashboard/EmailForwardingPanel";
+import { EmailAliasDomains } from "@/components/dashboard/EmailAliasDomains";
+import { withAuthTimeout, authFailureMessage } from "@/lib/auth-timeout";
+import { oauthAvatarOf } from "@/lib/oauth-avatar";
 import { BlueskyWizard } from "@/components/dashboard/BlueskyWizard";
+import { BookingBlockSettings } from "@/components/dashboard/BookingBlockSettings";
+import { GalleryBlockSettings } from "@/components/dashboard/GalleryBlockSettings";
+import { MediaEmbedBlockSettings } from "@/components/dashboard/MediaEmbedBlockSettings";
+import { ContactFormBlockSettings } from "@/components/dashboard/ContactFormBlockSettings";
+import { EventListBlockSettings } from "@/components/dashboard/EventListBlockSettings";
+import {
+  FaqBlockSettings,
+  MapBlockSettings,
+  PollBlockSettings,
+} from "@/components/dashboard/InteractionBlockSettings";
 
-type StudioTab = "links" | "design" | "analytics" | "settings";
+import { SocialHandleInput } from "@/components/SocialHandleInput";
+import { isHandleBlock } from "@/lib/social-handles";
 
-const TABS: { id: StudioTab; label: string; icon: typeof Link2 }[] = [
+type StudioTab = "links" | "design" | "analytics" | "identity" | "settings";
+
+/**
+ * `verifiedOnly` tabs are hidden entirely for free members: subdomains,
+ * Bluesky handles and e-mail aliases are all entitlements that only exist
+ * once a profile is verified, so showing an empty locked tab is just noise.
+ */
+const TABS: { id: StudioTab; label: string; icon: typeof Link2; verifiedOnly?: boolean }[] = [
   { id: "links", label: "Links & components", icon: Link2 },
   { id: "design", label: "Design & styling", icon: Palette },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "identity", label: "Domains & Bluesky", icon: Globe, verifiedOnly: true },
   { id: "settings", label: "Settings & verified", icon: Settings },
 ];
 
-const TYPOGRAPHY_OPTIONS = [
-  { id: "sans", label: "Modern (Sans)" },
-  { id: "serif", label: "Classic (Serif)" },
-  { id: "mono", label: "Technical (Mono)" },
-] as const;
-
-const BACKGROUND_OPTIONS = [
-  { id: "solid", label: "Solid" },
-  { id: "grid", label: "Subtle Grid" },
-  { id: "gradient", label: "Soft Gradient" },
-] as const;
+const TYPOGRAPHY_OPTIONS = TYPOGRAPHY_STYLES;
+const BACKGROUND_OPTIONS = BACKGROUND_STYLES;
 
 const QUICK_CREATE = [
   { kind: "link", label: "+ Link" },
@@ -140,8 +212,17 @@ function inputHint(kind: string): { prefix?: string; help: string } {
  */
 export function ProfileEditor() {
   const { user } = useAuth();
+  const { style: rawUrlStyle, save: saveUrlStylePref } = useUrlStyle();
+
+  const loadProfileEditor = useServerFn(getStudioProfile);
+  const checkHandle = useServerFn(checkStudioHandle);
+  const saveProfile = useServerFn(saveStudioProfile);
+  const loadAnalytics = useServerFn(getStudioAnalytics);
   const [tab, setTab] = useState<StudioTab>("links");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -153,14 +234,37 @@ export function ProfileEditor() {
   const [faviconUrl, setFaviconUrl] = useState("");
   const [theme, setTheme] = useState("noir");
   const [cardStyle, setCardStyle] = useState("bordered");
-  const [typography, setTypography] = useState<string>("sans");
-  const [backgroundStyle, setBackgroundStyle] = useState<string>("solid");
+  const [prefs, setPrefs] = useState<ProfileDisplayPrefs>(DEFAULT_DISPLAY_PREFS);
+  const setPref = <K extends keyof ProfileDisplayPrefs>(key: K, value: ProfileDisplayPrefs[K]) =>
+    setPrefs((p) => ({ ...p, [key]: value }));
   const [blocks, setBlocks] = useState<ProfileBlock[]>([]);
   const [verified, setVerified] = useState(false);
+  const { space: identitySpace, select: selectIdentitySpace } = useIdentitySpace(verified);
+
+  const [legalName, setLegalName] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState<string>("all");
+  /** Standaard staat "Soeverein & Fediverse" voor: soevereine tools eerst. */
+  const [cat, setCat] = useState<string>("featured");
+  /** Actieve curated tab in de "+ Add component"-drawer (`null` = klassieke categorieën). */
+  const [blockTab, setBlockTab] = useState<string | null>(null);
+  /** Live view: realistisch telefoonframe of breed desktopvenster. */
+  const [previewDevice, setPreviewDevice] = useState<"mobile" | "desktop">("mobile");
+  /** Desktopscherm: werkelijke containerbreedte → schaalfactor voor het 1280px-virtuele viewport. */
+  const laptopScreenRef = useRef<HTMLDivElement>(null);
+  const [laptopScale, setLaptopScale] = useState(0.3);
+  useEffect(() => {
+    if (previewDevice !== "desktop") return;
+    const el = laptopScreenRef.current;
+    if (!el) return;
+    const update = () => setLaptopScale(el.clientWidth / 1280);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [previewDevice]);
+
   const [openBlock, setOpenBlock] = useState<string | null>(null);
   const [stats, setStats] = useState<{ qrs: number; scans: number } | null>(null);
   const [range, setRange] = useState<(typeof RANGE_OPTIONS)[number]["id"]>("30d");
@@ -174,100 +278,124 @@ export function ProfileEditor() {
 
   useEffect(() => {
     if (!user) return;
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
     (async () => {
-      const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-      if (data) {
-        setHandle(data.username ?? "");
-        setClaimed(data.username ?? null);
-        setVerified(Boolean(data.verified) && data.status === "active");
-        setDisplayName(data.display_name ?? "");
-        setTagline(data.tagline ?? "");
-        setAvatarUrl(data.avatar_url ?? "");
-        setFaviconUrl((data as { favicon_url?: string | null }).favicon_url ?? "");
-        setTheme(data.theme ?? "noir");
-        setCardStyle(data.card_style ?? "bordered");
-        setBlocks(Array.isArray(data.blocks) ? (data.blocks as unknown as ProfileBlock[]) : []);
-      } else {
-        const wanted = (user.user_metadata?.desired_handle as string | undefined) ?? "";
-        setHandle(normalizeHandle(wanted || user.email?.split("@")[0] || ""));
-        setDisplayName((user.user_metadata?.full_name as string | undefined) ?? "");
-      }
-      // Extra styling prefs (typography / background) live client-side only for now.
       try {
-        const raw = localStorage.getItem(`rout_studio_extra_${user.id}`);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { typography?: string; backgroundStyle?: string };
-          if (parsed.typography) setTypography(parsed.typography);
-          if (parsed.backgroundStyle) setBackgroundStyle(parsed.backgroundStyle);
+        console.info("[studio:profile-load:start]", { attempt: loadAttempt });
+        const started = Date.now();
+        const data = await withAuthTimeout(loadProfileEditor(), "studio:getStudioProfile", 8_000);
+        if (!active) return;
+        console.info(`[studio:profile-load:done] ${Date.now() - started}ms found=${Boolean(data)}`);
+        if (data) {
+          setHandle(data.username ?? "");
+          setClaimed(data.username ?? null);
+          setVerified(Boolean(data.verified) && data.status === "active");
+          setLegalName(data.verifiedLegalName || null);
+          setDisplayName(data.displayName ?? "");
+          setTagline(data.tagline ?? "");
+          setAvatarUrl(data.avatarUrl ?? oauthAvatarOf(user) ?? "");
+          setFaviconUrl(data.faviconUrl ?? "");
+          setTheme(data.theme ?? "noir");
+          setCardStyle(data.cardStyle ?? "bordered");
+          setBlocks(Array.isArray(data.blocks) ? (data.blocks as unknown as ProfileBlock[]) : []);
+        } else {
+          const wanted = (user.user_metadata?.desired_handle as string | undefined) ?? "";
+          setHandle(normalizeHandle(wanted || user.email?.split("@")[0] || ""));
+          setDisplayName((user.user_metadata?.full_name as string | undefined) ?? "");
+          setAvatarUrl(oauthAvatarOf(user) ?? "");
         }
-      } catch {
-        /* ignore */
+        // Weergavevoorkeuren komen uit de database; lokale legacy-waarden
+        // dienen alleen nog als terugval voor wie nog niet opnieuw opsloeg.
+        let loadedPrefs = parseDisplayPrefs(data?.displayPrefs ?? null);
+        if (!data?.displayPrefs || Object.keys(data.displayPrefs).length === 0) {
+          try {
+            const raw = localStorage.getItem(`rout_studio_extra_${user.id}`);
+            if (raw) loadedPrefs = parseDisplayPrefs({ ...loadedPrefs, ...JSON.parse(raw) });
+          } catch {
+            /* ignore */
+          }
+        }
+        setPrefs(loadedPrefs);
+        setLoadError(null);
+      } catch (error) {
+        if (!active) return;
+        console.error("[studio:profile-load:failed]", {
+          message: error instanceof Error ? error.message : String(error),
+          name: error instanceof Error ? error.name : typeof error,
+          status: (error as { status?: number } | null)?.status ?? null,
+          body: (error as { body?: unknown } | null)?.body ?? null,
+          raw: error,
+        });
+
+        setLoadError(
+          authFailureMessage(error, "We konden je profiel niet laden. Probeer het opnieuw."),
+        );
+      } finally {
+        // Never leave the studio spinning: the loader stops on success and failure.
+        if (active) setLoading(false);
       }
-      setLoading(false);
     })();
-  }, [user]);
+    return () => {
+      active = false;
+    };
+  }, [user, loadProfileEditor, loadAttempt]);
 
-  useEffect(() => {
-    if (!user || loading) return;
-    localStorage.setItem(
-      `rout_studio_extra_${user.id}`,
-      JSON.stringify({ typography, backgroundStyle }),
-    );
-  }, [user, loading, typography, backgroundStyle]);
 
-  // Privacy-first counters: only aggregated counts, no visitor profiles.
-  useEffect(() => {
-    if (!user || tab !== "analytics" || stats) return;
-    (async () => {
-      const { data: qrs } = await supabase.from("tracked_qrs").select("id").eq("user_id", user.id);
-      const ids = (qrs ?? []).map((q) => q.id);
-      let scans = 0;
-      if (ids.length) {
-        const { count } = await supabase
-          .from("qr_scans")
-          .select("id", { count: "exact", head: true })
-          .in("tracked_qr_id", ids);
-        scans = count ?? 0;
-      }
-      setStats({ qrs: ids.length, scans });
-    })();
-  }, [user, tab, stats]);
 
-  // Traffic-trend chart: bucket real scans by day for the selected range.
+
+  // Privacy-first counters: only aggregated counts, no visitor profiles (Neon).
   useEffect(() => {
     if (!user || tab !== "analytics") return;
+    let active = true;
+    const opt = RANGE_OPTIONS.find((r) => r.id === range);
     (async () => {
-      const { data: qrs } = await supabase.from("tracked_qrs").select("id").eq("user_id", user.id);
-      const ids = (qrs ?? []).map((q) => q.id);
-      if (!ids.length) {
+      try {
+        const data = await loadAnalytics({ data: { days: opt?.days ?? null } });
+        if (!active) return;
+        setStats({ qrs: data.qrs, scans: data.scans });
+        setSeries(data.series);
+      } catch (error) {
+        if (!active) return;
+        console.error("[studio:analytics:failed]", error);
+        setStats({ qrs: 0, scans: 0 });
         setSeries([]);
-        return;
       }
-      const opt = RANGE_OPTIONS.find((r) => r.id === range);
-      let q = supabase.from("qr_scans").select("scanned_at").in("tracked_qr_id", ids);
-      if (opt?.days) {
-        const since = new Date(Date.now() - opt.days * 24 * 60 * 60 * 1000).toISOString();
-        q = q.gte("scanned_at", since);
-      }
-      const { data: scans } = await q;
-      const buckets = new Map<string, number>();
-      for (const s of scans ?? []) {
-        const day = (s.scanned_at as string).slice(0, 10);
-        buckets.set(day, (buckets.get(day) ?? 0) + 1);
-      }
-      const sorted = [...buckets.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, scans]) => ({ date, scans }));
-      setSeries(sorted);
     })();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, tab, range]);
 
   /** Canonical public host — always rout.be, even in preview/dev. */
   const host = "rout.be";
   const normalized = normalizeHandle(handle);
   const reserved = isReservedHandle(normalized);
-  const handleOk = isValidHandle(normalized) && !reserved;
-  const publicPath = verified ? `/@${claimed}` : `/u/@${claimed}`;
+  const handleCtx = {
+    tier: (verified ? "verified" : "free") as "verified" | "free",
+    // Geverifieerde handles volgen altijd de naamstructuur — ook in privacy-modus,
+    // want het blauwe vinkje hangt aan die wettelijke naam.
+    legalName,
+    identityMode: prefs.identityMode,
+  };
+  const handleProblem = normalized ? handleIssue(normalized, handleCtx) : null;
+  const handleOk = isValidHandle(normalized) && !reserved && !handleProblem;
+  // Volg de actieve identiteitsruimte; schone root-URLs blijven Pro-only.
+  const urlStyle = effectiveUrlStyle(
+    identitySpace === "verified" ? "clean" : rawUrlStyle === "clean" || rawUrlStyle === "clean_at" ? "u" : rawUrlStyle,
+    verified,
+  );
+  const publicPath = styledProfilePath(claimed ?? "", urlStyle);
+
+
+  const visibleTabs = useMemo(() => TABS.filter((t) => !t.verifiedOnly || verified), [verified]);
+  // Losing verification (or loading it late) must never leave the studio on a
+  // tab that is no longer rendered — that would show an empty pane.
+  useEffect(() => {
+    if (!visibleTabs.some((t) => t.id === tab)) setTab("links");
+  }, [visibleTabs, tab]);
 
   // Debounced real-time handle availability check against the profiles table.
   useEffect(() => {
@@ -281,16 +409,11 @@ export function ProfileEditor() {
     }
     setAvailability("checking");
     const id = setTimeout(async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("username", normalized)
-        .maybeSingle();
-      if (data && data.id !== user?.id) setAvailability("taken");
-      else setAvailability("available");
+      const data = await checkHandle({ data: { handle: normalized } });
+      setAvailability(data.ok ? "available" : "taken");
     }, 400);
     return () => clearTimeout(id);
-  }, [normalized, handleOk, claimed, user]);
+  }, [normalized, handleOk, claimed, user, checkHandle]);
 
   const draft: ProfileRecord = useMemo(
     () => ({
@@ -305,6 +428,8 @@ export function ProfileEditor() {
       blocks,
       verified,
       status: verified ? "active" : "pending",
+      verified_legal_name: legalName,
+      display_prefs: prefs,
     }),
     [
       user,
@@ -317,6 +442,8 @@ export function ProfileEditor() {
       cardStyle,
       blocks,
       verified,
+      legalName,
+      prefs,
     ],
   );
 
@@ -353,28 +480,32 @@ export function ProfileEditor() {
     if (!user) return;
     if (!handleOk) {
       if (silent) return;
-      return toast.error(`Choose a valid handle — ${HANDLE_RULE}.`);
+      return toast.error(handleProblem ?? `Choose a valid handle — ${handleRuleHint(handleCtx)}.`);
     }
     setSaving(true);
-    const { error } = await supabase.from("profiles").upsert({
-      id: user.id,
-      username: normalized,
-      display_name: displayName.trim() || null,
-      tagline: tagline.trim() || null,
-      avatar_url: avatarUrl.trim() || null,
-      favicon_url: faviconUrl.trim() || null,
-      theme,
-      card_style: cardStyle,
-      blocks: blocks as unknown as never,
+    const result = await saveProfile({
+      data: {
+        username: normalized,
+        displayName: displayName.trim() || null,
+        tagline: tagline.trim() || null,
+        avatarUrl: avatarUrl.trim() || null,
+        faviconUrl: faviconUrl.trim() || null,
+        theme,
+        cardStyle,
+        blocks: blocks as unknown as never,
+        displayPrefs: prefs as unknown as never,
+      },
     });
     setSaving(false);
-    if (error) {
+    if (!result.ok) {
       if (silent) return;
-      if (error.code === "23505" || /duplicate|unique/i.test(error.message))
-        return toast.error("That handle is already taken.");
-      if (/handle_reserved/.test(error.message))
+      if (result.reason === "handle_taken") return toast.error("That handle is already taken.");
+      if (result.reason === "handle_reserved")
         return toast.error("That handle is reserved by the system.");
-      return toast.error(error.message);
+      if (result.reason === "handle_invalid") return toast.error("That handle is not valid.");
+      if (result.reason === "handle_identity_mismatch")
+        return toast.error(VERIFIED_STRUCTURE_MESSAGE);
+      return toast.error(result.reason ?? "Saving failed");
     }
     setClaimed(normalized);
     setDirty(false);
@@ -382,14 +513,31 @@ export function ProfileEditor() {
     if (!silent) toast.success("Studio saved");
   };
 
-  const addBlock = (kind: string) => {
+  const addBlock = (kind: string, value = "") => {
     const def = BLOCK_KINDS.find((k) => k.kind === kind)!;
     const id = newBlockId();
-    setBlocks((b) => [...b, { id, kind, label: def.label, value: "" }]);
+    setBlocks((b) => [...b, { id, kind, label: def.label, value }]);
     setOpenBlock(id);
     setDrawer(false);
     // Search term and category are kept for next time.
   };
+
+  /**
+   * Plakt de maker een geldige URL in het zoekveld, dan bieden we direct een
+   * vooraf ingevuld Smart Link-component aan (fast paste → smart link).
+   */
+  const pastedUrl = useMemo(() => {
+    const q = query.trim();
+    if (q.length < 6 || q.includes(" ")) return null;
+    const withProto = /^https?:\/\//i.test(q) ? q : `https://${q}`;
+    try {
+      const u = new URL(withProto);
+      if (!u.hostname.includes(".")) return null;
+      return u.toString();
+    } catch {
+      return null;
+    }
+  }, [query]);
 
   const quickCreate = (kind: (typeof QUICK_CREATE)[number]["kind"]) => {
     if (kind === "__socials") {
@@ -452,6 +600,17 @@ export function ProfileEditor() {
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // Curated tab actief → toon alleen de kinds van die tab als één groep.
+    if (blockTab) {
+      const tab = BLOCK_TABS.find((t) => t.id === blockTab);
+      if (tab) {
+        const items = tab.kinds
+          .map((kind) => BLOCK_KINDS.find((k) => k.kind === kind))
+          .filter((k): k is (typeof BLOCK_KINDS)[number] => Boolean(k))
+          .filter((k) => !q || k.label.toLowerCase().includes(q));
+        return items.length ? [{ id: tab.id, label: tab.label, items }] : [];
+      }
+    }
     return BLOCK_CATEGORIES.filter((c) => cat === "all" || cat === c.id)
       .map((c) => ({
         ...c,
@@ -460,7 +619,7 @@ export function ProfileEditor() {
         ),
       }))
       .filter((c) => c.items.length > 0);
-  }, [cat, query]);
+  }, [cat, query, blockTab]);
 
   // Top clicked components: proportional estimate over total scans, ranked by position
   // until per-block click tracking ships. Purely presentational, no fabricated identities.
@@ -479,6 +638,18 @@ export function ProfileEditor() {
   }, [blocks, stats]);
   const maxClicks = topClicked[0]?.clicks || 1;
 
+  if (loadError) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm font-medium">Je profiel kon niet geladen worden</p>
+        <p className="max-w-sm text-sm text-muted-foreground">{loadError}</p>
+        <Button variant="outline" onClick={() => setLoadAttempt((n) => n + 1)}>
+          Opnieuw proberen
+        </Button>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
@@ -487,78 +658,108 @@ export function ProfileEditor() {
     );
   }
 
+
   const showSaveBar = tab !== "analytics";
 
   return (
-    <div className={cn("flex flex-1 flex-col space-y-4", showSaveBar && "pb-32")}>
-      {/* Namespace banner — crystal clear which tier is active */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
-        <span
-          className={cn(
-            "rounded-full px-2 py-0.5 text-[11px] font-medium",
-            verified ? "bg-primary/10" : "bg-muted",
-          )}
-        >
-          {verified ? "Pro tier" : "Free tier"}
-        </span>
-        <span className="min-w-0 break-all font-mono text-[13px] font-medium">
-          {host}
-          {verified ? "/@" : "/u/@"}
-          {normalized || "handle"}
-        </span>
-        {claimed && (
+    <div className={cn("flex flex-1 flex-col space-y-4", showSaveBar && "pb-16 lg:pb-4")}>
+      {/* Compacte studiokop: tier-balk en tabs blijven bij het scrollen staan en
+          nemen samen nauwelijks hoogte in, zodat de live preview hoger begint. */}
+      {/* RIJ 1 — profielstatus & URL-balk */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              verified ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {verified ? "Pro" : "Free"}
+          </span>
           <a
             href={publicPath}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto text-xs font-medium underline"
+            className="min-w-0 truncate font-mono text-xs font-medium underline-offset-4 hover:underline sm:text-sm"
           >
-            View live →
+            {host}
+            {styledProfilePath(normalized || "handle", urlStyle)}
           </a>
-        )}
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(
+                `https://rout.be${styledProfilePath(normalized || "handle", urlStyle)}`,
+              );
+              toast.success("Link gekopieerd!");
+            }}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium hover:bg-muted"
+          >
+            <Copy className="h-3.5 w-3.5" aria-hidden /> Kopieer
+          </button>
+        </div>
+        <a
+          href={publicPath}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border px-3 text-xs font-medium transition-colors hover:bg-muted"
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden /> Bekijk live profiel ↗
+        </a>
       </div>
 
-      {/* Studio tabs */}
+      {/* RIJ 2 — hoofdnavigatie van de studio */}
       <div
         role="tablist"
         aria-label="Studio"
-        className="flex w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="sticky top-14 z-20 flex w-full gap-1 overflow-x-auto rounded-2xl border border-border bg-card/95 p-1 backdrop-blur [scrollbar-width:none] supports-[backdrop-filter]:bg-card/80 [&::-webkit-scrollbar]:hidden"
       >
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {visibleTabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             role="tab"
             type="button"
             aria-selected={tab === id}
+            title={label}
             onClick={() => setTab(id)}
             className={cn(
-              "flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors",
+              "flex h-9 flex-1 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 text-xs font-medium transition-colors",
               tab === id
                 ? "bg-foreground text-background"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="h-4 w-4" aria-hidden />
-            <span className="whitespace-nowrap">{label}</span>
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+            {label}
           </button>
         ))}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0 space-y-4">
+      <div className="mt-6 grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
+        <div className="min-w-0 space-y-6 lg:col-span-7">
           {tab === "links" && (
-            <>
+            <Accordion type="single" collapsible className="space-y-3">
+              <AccordionItem
+                value="profile_info"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">👤 Profiel Basisinformatie</span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
               {/* Permanent Profile Info Card */}
               <section className="space-y-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
+
                 <h2 className="text-lg font-medium">Profile Info</h2>
-                <div className="flex items-center gap-4">
-                  <label className="group relative flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-dashed border-border bg-muted/50 text-muted-foreground hover:border-primary/50">
-                    {avatarUrl ? (
-                      <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
-                    ) : (
-                      <Upload className="h-5 w-5" aria-hidden />
-                    )}
-                  </label>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                  <div className="w-full sm:max-w-xs">
+                    <AvatarUpload
+                      value={avatarUrl || null}
+                      name={displayName}
+                      onChange={(url) => setAvatarUrl(url ?? "")}
+                    />
+                  </div>
+
                   <div className="min-w-0 flex-1 space-y-2">
                     <Input
                       value={displayName}
@@ -580,7 +781,7 @@ export function ProfileEditor() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                    rout.be{profilePath(normalized || "handle", verified)}
+                    rout.be{styledProfilePath(normalized || "handle", urlStyle)}
                   </span>
                   <button
                     type="button"
@@ -593,7 +794,7 @@ export function ProfileEditor() {
                     type="button"
                     onClick={() => {
                       void navigator.clipboard.writeText(
-                        `https://rout.be${profilePath(normalized || "handle", verified)}`,
+                        `https://rout.be${styledProfilePath(normalized || "handle", urlStyle)}`,
                       );
                       toast.success("Link copied!");
                     }}
@@ -603,8 +804,27 @@ export function ProfileEditor() {
                   </button>
                 </div>
               </section>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem
+                value="components_list"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">
+                      🔗 Links &amp; Inhoudscomponenten
+                    </span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {blocks.filter((b) => !b.hidden).length} zichtbaar
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
 
               <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
+
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-medium">Components</h2>
                   <span className="text-[11px] text-muted-foreground">
@@ -715,21 +935,146 @@ export function ProfileEditor() {
 
                         {open && (
                           <div className="mt-3 space-y-2 border-t border-border pt-3">
-                            <Input
-                              className="input-field h-11 rounded-xl"
-                              placeholder={BLOCK_KINDS.find((k) => k.kind === b.kind)?.placeholder}
-                              value={b.value}
-                              maxLength={400}
-                              onChange={(e) => patch(b.id, { value: e.target.value })}
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              {hint.prefix && (
-                                <span className="mr-1 font-mono text-foreground">
-                                  {hint.prefix}
-                                </span>
-                              )}
-                              {hint.help}
-                            </p>
+                            {b.kind === "media_gallery" ? (
+                              <GalleryBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "media_embed" ? (
+                              <MediaEmbedBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "booking_request" ? (
+                              <BookingBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "contact_form" ? (
+                              <ContactFormBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "event_list" ? (
+                              <EventListBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "live_poll" ? (
+                              <PollBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "faq_accordion" ? (
+                              <FaqBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+                            ) : b.kind === "map_embed" ? (
+                              <MapBlockSettings
+                                value={b.value}
+                                onChange={(value) => patch(b.id, { value })}
+                                onTitle={(label) => patch(b.id, { label })}
+                              />
+
+                            ) : isHandleBlock(b.kind) && b.kind !== "matrix" ? (
+                              <>
+                                <SocialHandleInput
+                                  kind={b.kind}
+                                  label={b.label}
+                                  value={b.value}
+                                  onChange={(handle) => patch(b.id, { value: handle })}
+                                  placeholder={
+                                    BLOCK_KINDS.find((k) => k.kind === b.kind)?.placeholder?.replace(
+                                      /^@/,
+                                      "",
+                                    ) ?? "username"
+                                  }
+                                />
+                                <p className="text-[11px] text-muted-foreground">
+                                  Enter just your handle — paste a full link and we extract the
+                                  username automatically.
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <Input
+                                  className="input-field h-11 rounded-xl"
+                                  placeholder={
+                                    BLOCK_KINDS.find((k) => k.kind === b.kind)?.placeholder
+                                  }
+                                  value={b.value}
+                                  maxLength={400}
+                                  onChange={(e) => patch(b.id, { value: e.target.value })}
+                                />
+                                <p className="text-[11px] text-muted-foreground">
+                                  {hint.prefix && (
+                                    <span className="mr-1 font-mono text-foreground">
+                                      {hint.prefix}
+                                    </span>
+                                  )}
+                                  {hint.help}
+                                </p>
+                              </>
+                            )}
+                            {isPromoBlock(b.kind) && (
+                              <div className="space-y-2 rounded-xl border border-border/60 bg-background p-3">
+                                <p className="text-[11px] font-medium text-foreground">
+                                  Promo-instellingen
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {PROMO_BADGE_PRESETS.map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      onClick={() => patch(b.id, { badge: preset })}
+                                      className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                </div>
+                                <Input
+                                  className="input-field h-9 rounded-xl"
+                                  placeholder="Badge (bijv. 🔥 NIEUW)"
+                                  maxLength={32}
+                                  value={b.badge ?? ""}
+                                  onChange={(e) => patch(b.id, { badge: e.target.value })}
+                                />
+                                <Input
+                                  type="datetime-local"
+                                  className="input-field h-9 rounded-xl"
+                                  aria-label="Actie loopt tot"
+                                  value={(b.expiresAt ?? "").slice(0, 16)}
+                                  onChange={(e) =>
+                                    patch(b.id, {
+                                      expiresAt: e.target.value
+                                        ? new Date(e.target.value).toISOString()
+                                        : "",
+                                    })
+                                  }
+                                />
+                                <div className="flex flex-wrap gap-1.5">
+                                  {PROMO_COPY_PRESETS.map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      onClick={() => patch(b.id, { label: preset })}
+                                      className="rounded-full border border-dashed border-border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
@@ -764,101 +1109,313 @@ export function ProfileEditor() {
                   })}
                 </ul>
               </section>
-            </>
-          )}
-
-          {tab === "design" && (
-            <>
-              <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                <h2 className="text-lg font-medium">Avatar & Header</h2>
-                <div className="space-y-2">
-                  <label className="input-label" htmlFor="p-name">
-                    Display Name
-                  </label>
-                  <Input
-                    id="p-name"
-                    value={displayName}
-                    maxLength={60}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    className="input-field h-11 rounded-xl"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="input-label" htmlFor="p-tag">
-                    Bio / Tagline
-                  </label>
-                  <Input
-                    id="p-tag"
-                    value={tagline}
-                    maxLength={120}
-                    placeholder="Sovereign QR infrastructure"
-                    onChange={(e) => setTagline(e.target.value)}
-                    className="input-field h-11 rounded-xl"
-                  />
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-border bg-muted/40">
-                    {avatarUrl ? (
-                      <img
-                        src={avatarUrl}
-                        alt="Avatar preview"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : null}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <FileUploadInput type="image" value={avatarUrl} onValueChange={setAvatarUrl} />
-                  </div>
-                  {avatarUrl && (
-                    <Button variant="ghost" size="sm" onClick={() => setAvatarUrl("")}>
-                      Remove
-                    </Button>
-                  )}
-                </div>
-                <div className="space-y-2 border-t border-border pt-3">
-                  <label className="input-label">Favicon (Optional)</label>
-                  <FileUploadInput type="image" value={faviconUrl} onValueChange={setFaviconUrl} />
-                  {faviconUrl && (
-                    <Button variant="ghost" size="sm" onClick={() => setFaviconUrl("")}>
-                      Remove
-                    </Button>
-                  )}
-                  <p className="text-[11px] text-muted-foreground">
-                    By default your public page uses your avatar as browser icon. Optionally upload
-                    a separate favicon (.ico/.png) for maximum branding.
-                  </p>
-                </div>
+              <section className="space-y-3">
+                <h2 className="px-1 text-lg font-medium">Referrals &amp; Rewards</h2>
+                <p className="px-1 text-sm text-muted-foreground">
+                  Nodig vrienden uit met je persoonlijke link. 3 vrienden = 50% korting,
+                  3 geverifieerde vrienden = gratis verificatie, 10 vrienden = gratis
+                  verificatie én de Epic badge “The Influencer”.
+                </p>
+                <ReferralPanel />
+                <ReferralAnalytics />
               </section>
 
+              <SocialVerifyPanel handle={normalized || handle} />
+
               <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                <h2 className="text-lg font-medium">Theme & Button Style</h2>
-                <p className="input-label">Theme Preset</p>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {PROFILE_THEMES.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTheme(t.id)}
-                      className={cn(
-                        "flex flex-col gap-2 rounded-xl border p-2.5 text-left transition-colors",
-                        theme === t.id ? "border-primary ring-1 ring-primary" : "border-border",
-                      )}
-                    >
-                      <span
-                        className="block h-10 w-full rounded-lg border border-border"
-                        style={{ background: t.bg }}
-                        aria-hidden
+                <h2 className="text-lg font-medium">Totaal bereik</h2>
+                <p className="text-sm text-muted-foreground">
+                  Toon één badge met je totale volgersaantal over al je gekoppelde accounts.
+                </p>
+                <TotalReachButton />
+              </section>
+
+              {/* Eén bron van waarheid: QR-styling gebeurt in de generator. */}
+              <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
+                <h2 className="text-lg font-medium">Profiel-QR</h2>
+                <p className="text-sm text-muted-foreground">
+                  Je profiel-QR ontwerp je in de QR-generator: kleuren, patronen, hoeken en logo.
+                  De code verwijst altijd naar je profiel, dus geprinte kaartjes blijven geldig.
+                </p>
+                <a
+                  href="/qr?type=profile_hub"
+                  className="inline-flex h-9 items-center gap-2 rounded-xl bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90"
+                >
+                  <QrCode className="h-3.5 w-3.5" aria-hidden /> Stijl &amp; download profiel-QR
+                </a>
+              </section>
+
+
+              <BadgesPanel />
+              <BadgeActivityPanel />
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem
+                value="conversion_tips"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    💡 Conversie Coach &amp; Optimalisatie
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <ConversionCoach blocks={blocks} />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
+
+
+          {tab === "design" && (
+            <Accordion
+              type="single"
+              collapsible
+              className="space-y-3"
+            >
+              {/* 1 — Avatar, header & kaders */}
+              <AccordionItem
+                value="avatar_header"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">👤 Avatar, Header &amp; Frames</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {avatarFrameLabel(prefs.avatarFrame)}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <div className="space-y-2">
+                    <label className="input-label" htmlFor="p-name">
+                      Display Name
+                    </label>
+                    <Input
+                      id="p-name"
+                      value={displayName}
+                      maxLength={60}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="input-field h-11 rounded-xl"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="input-label" htmlFor="p-tag">
+                      Bio / Tagline
+                    </label>
+                    <Input
+                      id="p-tag"
+                      value={tagline}
+                      maxLength={120}
+                      placeholder="Sovereign QR infrastructure"
+                      onChange={(e) => setTagline(e.target.value)}
+                      className="input-field h-11 rounded-xl"
+                    />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-border bg-muted/40">
+                      {avatarUrl ? (
+                        <img
+                          src={avatarUrl}
+                          alt="Avatar preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <FileUploadInput
+                        type="image"
+                        value={avatarUrl}
+                        onValueChange={setAvatarUrl}
                       />
-                      <span className="text-xs font-medium">{t.label}</span>
-                    </button>
-                  ))}
-                </div>
-                <p className="input-label pt-2">Button Shape</p>
-                <div className="flex flex-wrap gap-2">
-                  {CARD_STYLES.map((c) => {
-                    const shapeLabel =
-                      c.id === "bordered" ? "Bordered" : c.id === "solid" ? "Solid Flat" : "Pill";
-                    return (
+                    </div>
+                    {avatarUrl && (
+                      <Button variant="ghost" size="sm" onClick={() => setAvatarUrl("")}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <p className="input-label">Avatarkader / rand (24 presets)</p>
+                    <AvatarFramePicker
+                      value={prefs.avatarFrame}
+                      onChange={(f) => setPref("avatarFrame", f)}
+                      avatarUrl={avatarUrl}
+                      theme={themeOf(theme)}
+                    />
+                  </div>
+
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <p className="input-label">Naamaccent</p>
+                    <div className="flex flex-wrap gap-2">
+                      {NAME_ACCENTS.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => setPref("nameAccent", o.id)}
+                          className={cn(
+                            "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
+                            prefs.nameAccent === o.id
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-border",
+                          )}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="input-label">Statuslijn</p>
+                    <Input
+                      value={prefs.statusLine ?? ""}
+                      maxLength={60}
+                      onChange={(e) => setPref("statusLine", e.target.value || null)}
+                      placeholder="Beschikbaar voor werk"
+                      className="h-10 text-xs"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Max. 60 tekens, verschijnt onder je handle.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <label className="input-label">Favicon (optioneel)</label>
+                    <FaviconUploader value={faviconUrl} onChange={setFaviconUrl} />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+
+              {/* 2 — Design Studio: presets, wallpaper, knoppen, typografie, footer */}
+              <AccordionItem
+                value="design_studio"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">✨ Design &amp; Theme Customizer</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {prefs.customDesign ? "Custom" : "Preset"}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="pb-5">
+                  <DesignTabEditor
+                    prefs={prefs}
+                    setPref={setPref}
+                    theme={theme}
+                    setTheme={setTheme}
+                    cardStyle={cardStyle}
+                    setCardStyle={setCardStyle}
+                    verified={verified}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+
+              {/* 3 — Thema & kleuren */}
+              <AccordionItem
+                value="theme_colors"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">🎨 Thema &amp; Kleurenschema</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {PROFILE_THEMES.find((t) => t.id === theme)?.label ?? theme}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <p className="input-label">Themapreset</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {PROFILE_THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTheme(t.id)}
+                        className={cn(
+                          "flex flex-col gap-2 rounded-xl border p-2.5 text-left transition-colors",
+                          theme === t.id ? "border-primary ring-1 ring-primary" : "border-border",
+                        )}
+                      >
+                        <span
+                          className="block h-10 w-full rounded-lg border border-border"
+                          style={{ background: t.bg }}
+                          aria-hidden
+                        />
+                        <span className="text-xs font-medium">{t.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-3 border-t border-border pt-4">
+                    <div>
+                      <p className="text-sm font-medium">Canvas &amp; patroon</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Laat leeg om het gekozen thema te volgen.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(
+                        [
+                          { key: "canvasColor" as const, label: "Achtergrondkleur" },
+                          { key: "patternColor" as const, label: "Patroon- en randkleur" },
+                        ]
+                      ).map((f) => (
+                        <div key={f.key} className="space-y-1.5">
+                          <p className="input-label">{f.label}</p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              aria-label={f.label}
+                              value={prefs[f.key] ?? "#111111"}
+                              onChange={(e) => setPref(f.key, e.target.value)}
+                              className="h-10 w-12 shrink-0 cursor-pointer rounded-lg border border-border bg-transparent p-1"
+                            />
+                            <Input
+                              value={prefs[f.key] ?? ""}
+                              onChange={(e) => setPref(f.key, e.target.value || null)}
+                              placeholder="#0d0d0d"
+                              spellCheck={false}
+                              className="h-10 font-mono text-xs"
+                            />
+                            {prefs[f.key] && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-10 shrink-0 text-xs"
+                                onClick={() => setPref(f.key, null)}
+                              >
+                                Wis
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+
+              {/* 3 — Knoppen & typografie */}
+              <AccordionItem
+                value="buttons_typography"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">🔘 Knoppen &amp; Typografie</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {CARD_STYLES.find((c) => c.id === cardStyle)?.label ?? cardStyle}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <p className="input-label">Knopvorm</p>
+                  <div className="flex flex-wrap gap-2">
+                    {CARD_STYLES.map((c) => (
                       <button
                         key={c.id}
                         type="button"
@@ -868,53 +1425,175 @@ export function ProfileEditor() {
                           cardStyle === c.id ? "border-primary/50 bg-primary/10" : "border-border",
                         )}
                       >
-                        {shapeLabel}
+                        {c.label}
                       </button>
-                    );
-                  })}
-                </div>
-              </section>
+                    ))}
+                  </div>
+                  <p className="input-label pt-2">Typografie</p>
+                  <div className="flex flex-wrap gap-2">
+                    {TYPOGRAPHY_OPTIONS.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setPref("typography", t.id)}
+                        className={cn(
+                          "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
+                          prefs.typography === t.id
+                            ? "border-primary/50 bg-primary/10"
+                            : "border-border",
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-start justify-between gap-4 border-t border-border pt-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">&ldquo;Contact opslaan&rdquo;-knop</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Bezoekers bewaren je profiel als contactkaart (vCard).
+                      </p>
+                    </div>
+                    <Switch
+                      aria-label="Contact opslaan-knop tonen"
+                      checked={prefs.showVcardButton}
+                      onCheckedChange={(v) => setPref("showVcardButton", v)}
+                    />
+                  </div>
+                  <div className="flex items-start justify-between gap-4 border-t border-border pt-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">&ldquo;Made with ROUT&rdquo;-voetnoot</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {verified
+                          ? "Als geverifieerd lid is je profiel standaard white-label."
+                          : "Gratis profielen tonen de subtiele ROUT-voetnoot."}
+                      </p>
+                    </div>
+                    <Switch
+                      aria-label="Made with ROUT tonen"
+                      disabled={!verified}
+                      checked={verified ? (prefs.showWatermark ?? false) : true}
+                      onCheckedChange={(v) => setPref("showWatermark", v)}
+                    />
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
 
-              <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                <h2 className="text-lg font-medium">Typography</h2>
-                <div className="flex flex-wrap gap-2">
-                  {TYPOGRAPHY_OPTIONS.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTypography(t.id)}
-                      className={cn(
-                        "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
-                        typography === t.id ? "border-primary/50 bg-primary/10" : "border-border",
-                      )}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
+              {/* 4 — Achtergrond & visual FX */}
+              <AccordionItem
+                value="background_effects"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">🖼️ Achtergrond &amp; Visual FX</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {BACKGROUND_OPTIONS.find((o) => o.id === prefs.backgroundStyle)?.label ??
+                        prefs.backgroundStyle}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <VisitEffectPicker
+                    value={prefs.visitEffect}
+                    onChange={(id) => setPref("visitEffect", id)}
+                  />
+                  <p className="input-label pt-2">Achtergrondstijl</p>
+                  <div className="flex flex-wrap gap-2">
+                    {BACKGROUND_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        onClick={() => setPref("backgroundStyle", o.id)}
+                        className={cn(
+                          "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
+                          prefs.backgroundStyle === o.id
+                            ? "border-primary/50 bg-primary/10"
+                            : "border-border",
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="input-label pt-2">Banner</p>
+                  <div className="flex flex-wrap gap-2">
+                    {BANNER_STYLES.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        onClick={() => setPref("bannerStyle", o.id)}
+                        className={cn(
+                          "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
+                          prefs.bannerStyle === o.id
+                            ? "border-primary/50 bg-primary/10"
+                            : "border-border",
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  {prefs.bannerStyle === "gradient" && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <p className="input-label">Van</p>
+                        <input
+                          type="color"
+                          aria-label="Bannerkleur van"
+                          value={prefs.bannerFrom ?? "#1a1a1a"}
+                          onChange={(e) => setPref("bannerFrom", e.target.value)}
+                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-transparent p-1"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="input-label">Naar</p>
+                        <input
+                          type="color"
+                          aria-label="Bannerkleur naar"
+                          value={prefs.bannerTo ?? "#c9a84c"}
+                          onChange={(e) => setPref("bannerTo", e.target.value)}
+                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-transparent p-1"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {prefs.bannerStyle === "image" && (
+                    <div className="space-y-1.5">
+                      <p className="input-label">Afbeeldings-URL (https)</p>
+                      <Input
+                        value={prefs.bannerImageUrl ?? ""}
+                        onChange={(e) => setPref("bannerImageUrl", e.target.value || null)}
+                        placeholder="https://…/banner.jpg"
+                        spellCheck={false}
+                        className="h-10 text-xs"
+                      />
+                    </div>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
 
-              <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                <h2 className="text-lg font-medium">Background Style</h2>
-                <div className="flex flex-wrap gap-2">
-                  {BACKGROUND_OPTIONS.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      onClick={() => setBackgroundStyle(o.id)}
-                      className={cn(
-                        "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors",
-                        backgroundStyle === o.id
-                          ? "border-primary/50 bg-primary/10"
-                          : "border-border",
-                      )}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            </>
+              {/* 5 — Favorieten: films, series & boeken */}
+              <AccordionItem
+                value="favorites"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="flex flex-1 items-center justify-between gap-3 pr-2">
+                    <span className="text-base font-medium">⭐ Favorieten</span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {prefs.favorites.length}/{MAX_FAVORITES}
+                    </span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <FavoritesEditor
+                    value={prefs.favorites}
+                    onChange={(next) => setPref("favorites", next)}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           )}
 
           {tab === "analytics" && (
@@ -1028,16 +1707,83 @@ export function ProfileEditor() {
           )}
 
           {tab === "settings" && (
-            <>
+            <Accordion type="single" collapsible className="space-y-3">
+              <AccordionItem
+                value="account_billing"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    💳 Account, Data &amp; Facturatie
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+              <section className="space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
+
+                <h2 className="text-lg font-medium">Betalingen, data &amp; domein</h2>
+                <p className="text-sm text-muted-foreground">
+                  Facturen, betaalmethodes, data-export en je eigen domein staan nu bij je
+                  accountinstellingen.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="/settings?tab=payments"
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                  >
+                    Betalingen &amp; facturen →
+                  </a>
+                  <a
+                    href="/settings?tab=data"
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                  >
+                    Data &amp; domein →
+                  </a>
+                </div>
+                <div className="h-px bg-border" />
+                <VerifiedBadgeCard verified={verified} handle={handle || null} />
+              </section>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem
+                value="seo_sharing"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    🏷️ Social Sharing &amp; SEO Metadata
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <SocialSharingCard
+                    handle={handle || null}
+                    displayName={displayName}
+                    prefs={prefs}
+                    setPref={setPref}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem
+                value="identity_badges"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    🛡️ Identiteitsverificatie &amp; ROUT Badges
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
               <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+
                 <h2 className="text-lg font-medium">Handle & Identifier</h2>
                 <p id="handle-help" className="mt-1 text-xs text-muted-foreground">
-                  {HANDLE_RULE}
+                  {handleRuleHint(handleCtx)}
                 </p>
                 <div className="mt-3 flex min-w-0 items-center gap-2">
                   <span className="shrink-0 font-mono text-sm text-muted-foreground">
                     {host}
-                    {verified ? "/@" : "/u/@"}
+                    {styledProfilePath("", urlStyle)}
                   </span>
                   <Input
                     value={handle}
@@ -1050,7 +1796,10 @@ export function ProfileEditor() {
                     inputMode="text"
                     aria-invalid={normalized ? !handleOk : undefined}
                     aria-describedby="handle-help"
-                    onChange={(e) => setHandle(e.target.value)}
+                    onChange={(e) =>
+                      // Geen @, spaties, cijferruis of symbolen: strak en leesbaar.
+                      setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))
+                    }
                     className="input-field h-11 min-w-0 flex-1 rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-[invalid=true]:border-destructive"
                   />
                 </div>
@@ -1058,7 +1807,7 @@ export function ProfileEditor() {
                   <p className="mt-2 break-all text-xs">
                     {!handleOk ? (
                       <span className="text-muted-foreground" role="status">
-                        {handleIssue(normalized)}
+                        {handleProblem ?? handleIssue(normalized, handleCtx)}
                       </span>
                     ) : availability === "checking" ? (
                       <span className="text-muted-foreground">Checking availability…</span>
@@ -1073,57 +1822,382 @@ export function ProfileEditor() {
                     )}
                   </p>
                 )}
+                {verified && (
+                  <div className="mt-4">
+                    <VerifiedHandleBuilder
+                      legalName={legalName}
+                      hostPrefix={`${host}${styledProfilePath("", urlStyle)}`}
+                      onSelect={(next) => setHandle(next)}
+                    />
+                  </div>
+                )}
               </section>
-              <VerificationPanel />
-              <SubdomainPanel />
-              <EmailForwardingPanel />
-              <BlueskyWizard />
-              <BadgesPanel />
-            </>
+
+              <section className="space-y-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
+                <div>
+                  <h2 className="text-lg font-medium">Identiteit, URL &amp; badge</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {verified
+                      ? "Eén account, twee publieke ruimtes: je geverifieerde profiel en je privé alias-hub."
+                      : "Je alias-hub is actief. Directe rout.be/ links komen vrij met Pro."}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="input-label">Actieve identiteit</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        {
+                          id: "legal" as const,
+                          space: "verified" as const,
+                          label: "Echte naam · Directe URL",
+                          note: "bv. rout.be/creatief",
+                          pro: true,
+                        },
+                        {
+                          id: "private" as const,
+                          space: "alias" as const,
+                          label: "Privé alias",
+                          note: "bv. rout.be/u/creatief",
+                          pro: false,
+                        },
+                      ]
+                    ).map((m) => {
+                      const locked = m.pro && !verified;
+                      const active = identitySpace === m.space;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          disabled={locked}
+                          aria-disabled={locked}
+                          onClick={() => {
+                            if (locked) return;
+                            setPref("identityMode", m.id);
+                            selectIdentitySpace(m.space);
+                            void saveUrlStylePref((m.space === "alias" ? "u" : "clean") as UrlStyle);
+                          }}
+                          className={cn(
+                            "min-w-[9rem] flex-1 rounded-xl border px-3 py-2 text-left text-xs transition-colors",
+                            locked
+                              ? "cursor-not-allowed border-border opacity-60"
+                              : active
+                                ? "border-primary/50 bg-primary/10"
+                                : "border-border",
+                          )}
+                        >
+                          <span className="flex items-center gap-1.5 font-medium">
+                            {locked && <Lock className="h-3.5 w-3.5" aria-hidden />}
+                            {m.label}
+                            {locked && (
+                              <span className="ml-auto rounded bg-foreground px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-background">
+                                Pro
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-0.5 block text-muted-foreground">{m.note}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {!verified && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Directe rout.be/ links en het blauwe vinkje zijn exclusief voor Pro-accounts.
+                    </p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    Geverifieerde handles krijgen nooit automatische cijfers. In privé-modus hoeft je
+                    alias niets met je wettelijke naam te maken te hebben.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="input-label">Je profiel-URL</p>
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/60 px-3 py-2.5">
+                    <span className="truncate font-mono text-sm text-foreground">
+                      {host}
+                      {styledProfilePath(normalized || "handle", urlStyle)}
+                    </span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {identitySpace === "verified" ? "Geverifieerd" : "Privé alias"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Je URL volgt automatisch je actieve identiteit — geen cijfers, geen symbolen.
+                  </p>
+                </div>
+
+
+
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Badge tonen</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Verberg je badge als je liever geen status op je profiel toont.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Badge tonen"
+                    disabled={!verified}
+                    checked={prefs.badgeVisible}
+                    onCheckedChange={(v) => setPref("badgeVisible", v)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <p className="input-label">Badgetype</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {BADGE_TYPES.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        disabled={!verified || !prefs.badgeVisible}
+                        onClick={() => setPref("badgeType", b.id)}
+                        className={cn(
+                          "rounded-xl border px-3 py-2 text-left text-xs transition-colors disabled:opacity-50",
+                          prefs.badgeType === b.id
+                            ? "border-primary/50 bg-primary/10"
+                            : "border-border",
+                        )}
+                      >
+                        <span className="block font-medium">{b.label}</span>
+                        <span className="block text-muted-foreground">{b.note}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {prefs.badgeType === "verified" && (
+                  <div className="space-y-2">
+                    <p className="input-label">Naamweergave in de badge</p>
+                    <div className="flex flex-wrap gap-2">
+                      {BADGE_NAME_FORMATS.map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          disabled={!verified || !prefs.badgeVisible}
+                          onClick={() => setPref("badgeNameFormat", f.id)}
+                          className={cn(
+                            "h-10 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors disabled:opacity-50",
+                            prefs.badgeNameFormat === f.id
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-border",
+                          )}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                    {legalName && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Voorbeeld: {formatBadgeName(legalName, prefs.badgeNameFormat)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+              {/* Steunpagina staat er voor iedereen — free én Pro. */}
+              <DonationPanel
+                handle={claimed || normalized || null}
+                urlStyle={urlStyle}
+                verified={verified}
+              />
+              {!verified && <VerificationPanel />}
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           )}
+
+
+          {tab === "identity" && verified && (
+            <Accordion type="single" collapsible className="space-y-3">
+              <AccordionItem
+                value="subdomain_settings"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    🌐 Subdomeinen &amp; Custom Domains
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <SubdomainPanel />
+                  <EmailForwardingPanel />
+                  <EmailAliasDomains />
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem
+                value="bluesky_did"
+                className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+              >
+                <AccordionTrigger className="hover:no-underline">
+                  <span className="text-base font-medium">
+                    🦋 Bluesky DID &amp; Identity Protocol
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pb-5">
+                  <BlueskyWizard />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
+
 
         </div>
 
-        {/* Live preview — desktop: pinned next to the editor */}
-        <aside className="hidden lg:sticky lg:top-6 lg:block lg:h-fit">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Live preview
-          </p>
-          <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-[2rem] border-[6px] border-foreground/85 bg-background shadow-lg">
-            <div className="h-[520px] overflow-y-auto">
-              <div className="origin-top scale-[0.82]">
-                <ProfileView profile={previewDraft} free={!verified} />
-              </div>
+        
+        {/* Live preview — desktop: pinned next to the editor, altijd ónder de vaste header (z-10 < z-50) */}
+        <aside className="z-10 hidden self-start lg:sticky lg:top-20 lg:col-span-5 lg:block">
+          <div className="flex flex-col items-center justify-start rounded-3xl border border-border/80 bg-card/40 p-6 shadow-2xl">
+
+          <div className="mb-4 flex w-full items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Live preview
+            </p>
+            {/* Viewport-switcher: telefoonmockup ↔ desktopvenster */}
+            <div
+              role="group"
+              aria-label="Preview-formaat"
+              className="inline-flex items-center rounded-full border border-border bg-muted/40 p-0.5"
+            >
+              {(
+                [
+                  { id: "mobile", label: "Mobiel", Icon: Smartphone },
+                  { id: "desktop", label: "Desktop", Icon: Monitor },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setPreviewDevice(id)}
+                  aria-pressed={previewDevice === id}
+                  title={label}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium transition-all",
+                    previewDevice === id
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" aria-hidden />
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Changes are shown instantly — saving makes them live.
+
+          <div className="transition-all duration-300 ease-out">
+          {previewDevice === "mobile" ? (
+            /* Smartphone: 9:19.5, ronde hoeken, dunne bezel en camera-eiland */
+            <div className="mx-auto w-full max-w-[290px] overflow-hidden rounded-[36px] border border-border/70 bg-foreground/90 p-[10px] shadow-[0_24px_60px_-20px_rgba(0,0,0,0.55)] transition-all duration-300">
+              <div className="relative w-full overflow-hidden rounded-[28px] bg-background">
+                <span className="absolute left-1/2 top-2 z-10 flex h-3 w-20 -translate-x-1/2 items-center justify-center gap-1 rounded-full bg-foreground/80">
+                  <span className="h-1 w-8 rounded-full bg-background/25" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-background/35" />
+                </span>
+                <div className="preview-noscroll aspect-[9/19.5] w-full overflow-y-auto overflow-x-hidden text-foreground">
+                  <ProfileView profile={previewDraft} free={!verified} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Laptop: ultradunne metalen bezel met webcamstip, glasglans, hinge en 3D-toetsenborddek */
+            <div className="mx-auto w-full max-w-[520px] px-8 transition-all duration-300">
+              {/* Scherm: 16:10 retina-paneel, dunne bezel, ambient glow */}
+              <div className="relative rounded-t-xl border-[2px] border-zinc-700/60 bg-zinc-950 p-1.5 shadow-2xl shadow-black/60 shadow-[0_0_30px_rgba(255,255,255,0.04)]">
+                {/* Webcamstip gecentreerd in de bovenbezel */}
+                <span className="mx-auto my-0.5 block h-1.5 w-1.5 rounded-full bg-zinc-800" aria-hidden />
+                <div
+                  ref={laptopScreenRef}
+                  className="preview-noscroll relative aspect-[16/10] w-full overflow-hidden rounded-[4px] bg-background text-foreground"
+                >
+                  {/* 1:1 desktopproporties: render in virtueel 1280×800-viewport en schaal
+                      mee met de werkelijke containerbreedte via CSS-transform */}
+                  <div
+                    className="h-[800px] w-[1280px] origin-top-left"
+                    style={{ transform: `scale(${laptopScale})` }}
+                  >
+                    <ProfileView profile={previewDraft} free={!verified} layout="wide" />
+                  </div>
+                  {/* Diagonale glasglans over het scherm */}
+                  <div
+                    className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent"
+                    aria-hidden
+                  />
+                </div>
+              </div>
+              {/* Hinge: donkere metalen balk tussen scherm en dek */}
+              <div className="mx-auto h-2 w-[98%] rounded-b-sm border-t border-zinc-800 bg-zinc-950" aria-hidden />
+              {/* Onderdek: echt 3D-perspectief — bovenste rij wijkt naar achteren,
+                  spacebar en trackpad komen naar voren */}
+              <div className="[perspective:1000px]">
+                <div
+                  className="relative mx-auto w-[104%] -translate-x-[2%] origin-top rounded-b-2xl border border-t-0 border-zinc-700/80 bg-gradient-to-b from-zinc-800 to-zinc-900 px-4 pb-3 pt-2 shadow-2xl shadow-black/60 [transform:rotateX(32deg)] [transform-style:preserve-3d]"
+                >
+                  <div className="space-y-1 rounded-md bg-zinc-950/50 p-1.5">
+                    {Array.from({ length: 4 }).map((_, row) => (
+                      <div key={row} className="grid grid-cols-12 gap-1">
+                        {Array.from({ length: 12 }).map((_, col) => (
+                          <span
+                            key={col}
+                            className="h-2.5 rounded-[2px] border border-zinc-700/50 bg-zinc-800/80"
+                          />
+                        ))}
+                      </div>
+                    ))}
+                    {/* Spacebar */}
+                    <div className="mx-auto h-2.5 w-1/2 rounded-[2px] border border-zinc-700/50 bg-zinc-800/80" />
+                  </div>
+                  {/* Trackpad */}
+                  <div className="mx-auto mt-2 h-3.5 w-1/3 rounded-sm border border-zinc-700/50 bg-zinc-800/40" />
+                </div>
+              </div>
+              <div className="mx-auto h-1 w-[70%] rounded-b-full bg-black/40 blur-[2px]" aria-hidden />
+            </div>
+          )}
+
+          </div>
+          <p className="mt-3 text-center text-[11px] text-muted-foreground">
+            Wijzigingen zijn direct zichtbaar — opslaan maakt ze live.
           </p>
+          </div>
         </aside>
+
       </div>
 
-      {/* Sticky bottom save + preview bar */}
+      {/* Low, compact mobile bar: subtle autosave status + primary live-preview action.
+          Desktop already shows the pinned preview aside, so this bar is mobile-only. */}
       {showSaveBar && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background/80 p-4 backdrop-blur-md">
-          <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="flex-1 space-y-1">
-              <Button
-                className="h-12 w-full sm:w-auto sm:min-w-[180px]"
-                onClick={() => void save()}
-                disabled={saving}
-              >
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Save changes
-              </Button>
-              <p aria-live="polite" className="text-[11px] text-muted-foreground">
-                {saving ? "Saving…" : dirty ? "Unsaved changes" : "All changes autosaved"}
-              </p>
-            </div>
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/70 px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-lg lg:hidden">
+          <div className="mx-auto flex max-w-3xl items-center gap-2">
+            <p
+              aria-live="polite"
+              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[11px] text-muted-foreground"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden /> Opslaan…
+                </>
+              ) : dirty ? (
+                <>
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden /> Wijzigingen
+                  opslaan…
+                </>
+              ) : (
+                <>
+                  <Check className="h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  Automatisch opgeslagen
+                </>
+              )}
+            </p>
             <button
               type="button"
               onClick={() => setPreviewOpen(true)}
-              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-foreground text-sm font-medium text-background lg:hidden"
+              className="flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-foreground px-4 text-xs font-medium text-background"
             >
-              <Eye className="h-4 w-4" aria-hidden /> 👁 View live preview
+              <Eye className="h-3.5 w-3.5" aria-hidden /> Bekijk live preview
             </button>
           </div>
         </div>
@@ -1133,7 +2207,7 @@ export function ProfileEditor() {
       <Drawer open={previewOpen} onOpenChange={setPreviewOpen}>
         <DrawerContent className="flex max-h-[92vh] flex-col">
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-            <DrawerTitle className="text-sm font-medium">Live preview</DrawerTitle>
+            <DrawerTitle className="text-sm font-medium">Live view</DrawerTitle>
             <button
               type="button"
               aria-label="Close"
@@ -1144,11 +2218,15 @@ export function ProfileEditor() {
             </button>
           </div>
           <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto bg-muted/30 p-4">
-            <div className="mx-auto w-full max-w-[320px] overflow-hidden rounded-[2rem] border-[8px] border-foreground/85 bg-background shadow-xl">
-              <div className="h-[560px] overflow-y-auto">
-                <ProfileView profile={previewDraft} free={!verified} />
+            <div className="mx-auto w-full max-w-[320px] rounded-[2.6rem] border border-border/70 bg-foreground/90 p-[10px] shadow-[0_24px_60px_-20px_rgba(0,0,0,0.55)]">
+              <div className="relative overflow-hidden rounded-[2rem] bg-background">
+                <span className="absolute left-1/2 top-2 z-10 h-1.5 w-16 -translate-x-1/2 rounded-full bg-foreground/25" />
+                <div className="scrollbar-slim aspect-[9/19.5] overflow-y-auto text-foreground">
+                  <ProfileView profile={previewDraft} free={!verified} />
+                </div>
               </div>
             </div>
+
           </div>
         </DrawerContent>
       </Drawer>
@@ -1186,13 +2264,20 @@ export function ProfileEditor() {
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  onPaste={(e) => {
+                    const text = e.clipboardData.getData("text").trim();
+                    if (/^(https?:\/\/)?[\w-]+(\.[\w-]+)+/.test(text) && !text.includes(" ")) {
+                      e.preventDefault();
+                      setQuery(text);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
                     e.preventDefault();
                     const first = groups[0]?.items[0];
                     if (first) addBlock(first.kind);
                   }}
-                  placeholder="Search a platform…"
+                  placeholder="Zoek een component of plak direct een URL…"
                   className="input-field h-11 rounded-xl pl-9 pr-9"
                   aria-label="Search a component"
                 />
@@ -1211,13 +2296,37 @@ export function ProfileEditor() {
                 )}
               </div>
             </div>
+            {/* Curated high-value tabs */}
+            <div className="overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex w-max min-w-full items-center gap-2">
+                {BLOCK_TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={t.description}
+                    onClick={() => setBlockTab(blockTab === t.id ? null : t.id)}
+                    className={cn(
+                      "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-medium transition-colors",
+                      blockTab === t.id
+                        ? "border-primary/40 bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="overflow-x-auto px-4 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <div className="flex w-max min-w-full items-center gap-2">
                 {[{ id: "all", label: "All" }, ...BLOCK_CATEGORIES].map((c) => (
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() => setCat(c.id)}
+                    onClick={() => {
+                      setCat(c.id);
+                      setBlockTab(null);
+                    }}
                     className={cn(
                       "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-medium transition-colors",
                       cat === c.id
@@ -1233,12 +2342,30 @@ export function ProfileEditor() {
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-8 pt-3">
-            {groups.length === 0 ? (
+          <div className="scrollbar-slim flex max-h-[60vh] min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-8 pt-3">
+            {pastedUrl && (
+              <button
+                type="button"
+                onClick={() => addBlock("link", pastedUrl)}
+                className="flex items-center gap-3 rounded-2xl border border-primary/40 bg-primary/5 p-3 text-left transition-colors hover:border-primary/70"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/40">
+                  <SocialPlatformIcon source="link" className="h-[18px] w-[18px]" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-medium">Smart Link toevoegen</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{pastedUrl}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium">
+                  URL gedetecteerd
+                </span>
+              </button>
+            )}
+            {groups.length === 0 && !pastedUrl ? (
               <p className="py-6 text-center text-xs text-muted-foreground">No results.</p>
             ) : (
               groups.map((g) => (
-                <div key={g.id} className="space-y-1.5">
+                <div key={g.id} className="space-y-2">
                   <div className="flex items-center gap-2 px-0.5">
                     {g.id === "featured" ? (
                       <Star className="h-3.5 w-3.5 text-primary" aria-hidden />
@@ -1260,30 +2387,31 @@ export function ProfileEditor() {
                       </span>
                     )}
                   </div>
-                  {g.items.map((k) => (
-                    <button
-                      key={k.kind}
-                      type="button"
-                      onClick={() => addBlock(k.kind)}
-                      className={cn(
-                        "flex h-12 w-full items-center gap-3 rounded-xl border px-3 text-sm font-medium transition-colors hover:bg-muted",
-                        g.id === "featured"
-                          ? "border-primary/40 bg-primary/5"
-                          : "border-border bg-card",
-                      )}
-                    >
-                      <span
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40"
-                        style={{ color: brandOf(k.kind) }}
+                  {/* Compacte kaartengrid in plaats van volle-breedte rijen */}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {g.items.map((k) => (
+                      <button
+                        key={k.kind}
+                        type="button"
+                        onClick={() => addBlock(k.kind)}
+                        title={k.label}
+                        className={cn(
+                          "group flex min-w-0 flex-col items-center gap-2 rounded-2xl border p-3 text-center transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
+                          g.id === "featured"
+                            ? "border-primary/40 bg-primary/5 hover:border-primary/70"
+                            : "border-border bg-card hover:border-foreground/25",
+                        )}
                       >
-                        <SocialPlatformIcon source={k.kind} className="h-3.5 w-3.5 text-current" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-left">{k.label}</span>
-                      <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    </button>
-                  ))}
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/40 transition-transform duration-200 group-hover:scale-105">
+                          <SocialPlatformIcon source={k.kind} className="h-[18px] w-[18px]" />
+                        </span>
+                        <span className="w-full truncate text-xs font-medium">{k.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ))
+
             )}
           </div>
         </DrawerContent>

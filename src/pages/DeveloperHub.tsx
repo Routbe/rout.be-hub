@@ -7,6 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { CodeBlock } from "@/components/CodeBlock";
 import { StatusWidget } from "@/components/StatusWidget";
 import { MCP_TOOLS, type McpToolDef } from "@/lib/mcp-tools";
@@ -19,7 +25,9 @@ import {
   Download,
   ExternalLink,
   Gauge,
+  Globe,
   KeyRound,
+  Lock,
   Loader2,
   Play,
   Plus,
@@ -50,7 +58,19 @@ interface KeyRow {
   created_at: string;
 }
 
-const origin = () => (typeof window === "undefined" ? "https://rout.be" : window.location.origin);
+const FALLBACK_ORIGIN = "https://rout.be";
+
+
+/**
+ * Snippets must quote the host the developer is actually on, but SSR has no
+ * `window`. Rendering the fallback first and swapping after hydration keeps the
+ * markup identical on both sides while still showing the real origin.
+ */
+function useOrigin() {
+  const [value, setValue] = useState(FALLBACK_ORIGIN);
+  useEffect(() => setValue(window.location.origin), []);
+  return value;
+}
 
 function ToolTester({ tool }: { tool: McpToolDef }) {
   const [args, setArgs] = useState<Record<string, string>>(() =>
@@ -128,7 +148,7 @@ function ToolTester({ tool }: { tool: McpToolDef }) {
         )}
       </div>
 
-      <Button onClick={run} disabled={running} size="sm" className="mt-3 gap-2">
+      <Button onClick={run} disabled={running} size="sm" className="mt-3 w-full gap-2 sm:w-auto">
         {running ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
@@ -157,12 +177,19 @@ function ToolTester({ tool }: { tool: McpToolDef }) {
   );
 }
 
+/**
+ * One collapsible card per tool. Everything below the header is unmounted while
+ * collapsed, so the tools tab is a short scannable list on a phone instead of a
+ * kilometre of scroll.
+ */
 function ToolCard({ tool }: { tool: McpToolDef }) {
-  const [open, setOpen] = useState(false);
   return (
-    <article className="rounded-2xl border border-border bg-card p-5">
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
+    <AccordionItem
+      value={tool.name}
+      className="rounded-2xl border border-border bg-card px-4 sm:px-5"
+    >
+      <AccordionTrigger className="py-4 hover:no-underline">
+        <div className="min-w-0 flex-1 pr-2 text-left">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-mono text-sm text-foreground">{tool.name}</h3>
             <Badge variant="outline" className="text-[10px]">
@@ -171,16 +198,12 @@ function ToolCard({ tool }: { tool: McpToolDef }) {
           </div>
           <p className="mt-1.5 text-sm text-muted-foreground">{tool.description}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
-          {open ? "Hide details" : "Show details"}
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mt-4 space-y-4">
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-4 pb-4">
           {tool.params.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-border">
-              <table className="w-full min-w-[520px] text-left text-xs">
+            <div className="-mx-1 overflow-x-auto rounded-xl border border-border">
+              <table className="w-full min-w-[480px] text-left text-xs">
                 <thead className="bg-muted/50 text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-medium">Parameter</th>
@@ -226,8 +249,8 @@ function ToolCard({ tool }: { tool: McpToolDef }) {
           </div>
           <ToolTester tool={tool} />
         </div>
-      )}
-    </article>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -298,14 +321,16 @@ function TestConsole() {
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="mcp-args">Arguments (JSON)</Label>
+          {/* Compact on a phone (the editor must not eat the viewport), roomy on
+              a laptop where the response sits next to it. */}
           <Textarea
             id="mcp-args"
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            rows={12}
-            className="font-mono text-xs"
+            spellCheck={false}
+            className="min-h-[132px] resize-y font-mono text-xs sm:min-h-[220px] lg:min-h-[280px]"
           />
-          <Button onClick={run} disabled={running} className="mt-1 gap-2">
+          <Button onClick={run} disabled={running} className="mt-1 w-full gap-2 sm:w-auto">
             {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             Run tool
           </Button>
@@ -313,9 +338,11 @@ function TestConsole() {
         <div className="space-y-1.5">
           <Label>Response</Label>
           {result ? (
-            <CodeBlock language="json" code={result} />
+            <div className="max-h-[60vh] overflow-auto rounded-xl">
+              <CodeBlock language="json" code={result} />
+            </div>
           ) : (
-            <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
+            <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground lg:min-h-[220px]">
               Run a tool to see the response here.
             </div>
           )}
@@ -392,6 +419,41 @@ function ApiKeys() {
           Keys authenticate both the REST API and the MCP server. We store a hash only — the full
           key is shown once, right after you create it.
         </p>
+
+        {/* Which key belongs where: the single most common cause of leaked
+            credentials is a backend key pasted into browser code. */}
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-border bg-muted/40 p-3">
+            <div className="flex items-center gap-2">
+              <Globe className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+              <p className="text-xs font-semibold text-foreground">Public identifiers</p>
+              <Badge variant="outline" className="text-[10px]">
+                safe in the browser
+              </Badge>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+              Short links, <code className="font-mono">rout.be/u/@handle</code> profiles and the
+              OpenAPI spec URL are public by design. They may appear in front-end code, QR codes and
+              documentation.
+            </p>
+          </div>
+          <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+            <div className="flex items-center gap-2">
+              <Lock className="h-3.5 w-3.5 text-destructive" aria-hidden />
+              <p className="text-xs font-semibold text-foreground">
+                Secret keys (<code className="font-mono">rout_sk_…</code>)
+              </p>
+              <Badge variant="outline" className="border-destructive/40 text-[10px] text-destructive">
+                server-side only
+              </Badge>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+              These carry your scopes and act on your account. Keep them in server environment
+              variables or your MCP client config — never in front-end code, a public repository or
+              a browser <code className="font-mono">fetch</code>. Revoke instantly if exposed.
+            </p>
+          </div>
+        </div>
         <div className="mt-4 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <p className="eyebrow mr-1">Scopes</p>
@@ -545,7 +607,7 @@ export default function DeveloperHub() {
     if (!loading && !user) nav("/auth", { replace: true });
   }, [user, loading, nav]);
 
-  const base = origin();
+  const base = useOrigin();
   const [specSheetOpen, setSpecSheetOpen] = useState(false);
 
   const handleCopyOpenApiUrl = () => {
@@ -585,36 +647,67 @@ export default function DeveloperHub() {
         null,
         2,
       ),
-      curl: `curl -X POST ${base}/api/public/qr/create \\
+      curl: `curl --fail-with-body -X POST ${base}/api/public/qr/create \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $ROUT_API_KEY" \\
   -d '{"target_type":"url","target_url":"https://delplanche.com","label":"Summer campaign"}'`,
-      node: `const res = await fetch("${base}/api/public/qr/create", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: \`Bearer \${process.env.ROUT_API_KEY}\`,
-  },
-  body: JSON.stringify({
-    target_type: "url",
-    target_url: "https://delplanche.com",
-    label: "Summer campaign",
-  }),
-});
+      node: `const ROUT_API = "${base}";
 
-const { short_url, dashboard_token } = await res.json();`,
-      python: `import os, requests
+async function createQr() {
+  try {
+    const res = await fetch(\`\${ROUT_API}/api/public/qr/create\`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: \`Bearer \${process.env.ROUT_API_KEY}\`,
+      },
+      body: JSON.stringify({
+        target_type: "url",
+        target_url: "https://delplanche.com",
+        label: "Summer campaign",
+      }),
+    });
 
-res = requests.post(
-    "${base}/api/public/qr/create",
-    headers={"Authorization": f"Bearer {os.environ['ROUT_API_KEY']}"},
-    json={
-        "target_type": "url",
-        "target_url": "https://delplanche.com",
-        "label": "Summer campaign",
-    },
-)
-print(res.json())`,
+    // fetch() only rejects on network errors — check the status yourself.
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(\`ROUT API \${res.status}: \${body}\`);
+    }
+
+    const { short_url, dashboard_token } = await res.json();
+    return { short_url, dashboard_token };
+  } catch (error) {
+    console.error("Could not create the QR code:", error);
+    throw error;
+  }
+}`,
+      python: `import os
+import requests
+
+ROUT_API = "${base}"
+
+def create_qr():
+    try:
+        res = requests.post(
+            f"{ROUT_API}/api/public/qr/create",
+            headers={"Authorization": f"Bearer {os.environ['ROUT_API_KEY']}"},
+            json={
+                "target_type": "url",
+                "target_url": "https://delplanche.com",
+                "label": "Summer campaign",
+            },
+            timeout=10,
+        )
+        res.raise_for_status()  # 4xx/5xx never pass silently
+        return res.json()
+    except requests.HTTPError as error:
+        print("ROUT API rejected the request:", error.response.status_code, error.response.text)
+        raise
+    except requests.RequestException as error:
+        print("Could not reach the ROUT API:", error)
+        raise
+
+print(create_qr())`,
     }),
     [base],
   );
@@ -756,9 +849,11 @@ print(res.json())`,
             Six tools are exposed by{" "}
             <code className="font-mono text-foreground">@routbe/mcp-server</code>.
           </p>
-          {MCP_TOOLS.map((tool) => (
-            <ToolCard key={tool.name} tool={tool} />
-          ))}
+          <Accordion type="single" collapsible className="space-y-3">
+            {MCP_TOOLS.map((tool) => (
+              <ToolCard key={tool.name} tool={tool} />
+            ))}
+          </Accordion>
         </TabsContent>
 
         <TabsContent value="keys" className="mt-6">

@@ -90,8 +90,8 @@ export function siteOrigin(req: Request): string {
 }
 
 export async function admin() {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  return supabaseAdmin;
+  const { dbAdmin } = await import("@/lib/db/admin.server");
+  return dbAdmin;
 }
 
 /** Allocate a slug that is not yet taken. */

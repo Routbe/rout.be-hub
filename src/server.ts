@@ -2,7 +2,6 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import { handleSubdomainRequest } from "./lib/subdomain.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -48,10 +47,22 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      const subdomainResponse = await handleSubdomainRequest(request);
-      if (subdomainResponse) return subdomainResponse;
+      // Wildcard subdomains: AT Protocol DID first, then an internal rewrite to
+      // the member's public profile (the subdomain stays in the URL bar).
+      let incoming = request;
+      const host = request.headers.get("host") ?? "";
+      if (host.includes(".rout.be")) {
+        const { handleAtprotoDidRequest, handleSubdomainRequest, rewriteSubdomainRequest } =
+          await import("./lib/subdomain.server");
+        const did = await handleAtprotoDidRequest(request);
+        if (did) return did;
+        const redirect = await handleSubdomainRequest(request);
+        if (redirect) return redirect;
+        incoming = (await rewriteSubdomainRequest(request)) ?? request;
+      }
+
       const handler = await getServerEntry();
-      const response = await handler.fetch(request, env, ctx);
+      const response = await handler.fetch(incoming, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);
     } catch (error) {
       console.error(error);
@@ -62,3 +73,4 @@ export default {
     }
   },
 };
+

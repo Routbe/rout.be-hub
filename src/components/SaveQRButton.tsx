@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { db } from "@/lib/db/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Bookmark, Loader2 } from "lucide-react";
 import { useNavigate } from "@/lib/router-compat";
 import { extractDomain } from "@/lib/brand";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   qrType: string;
@@ -48,12 +49,22 @@ const TYPE_LABELS: Record<string, string> = {
  * Build a ready-to-accept name so saving is a single click:
  * "delplanche.com QR — Aug 2026", "Wi-Fi access — Aug 2026", …
  */
-export function suggestQRName(qrType: string, qrValue: string, hint?: string): string {
-  const stamp = new Date().toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+export function suggestQRName(
+  qrType: string,
+  qrValue: string,
+  hint?: string,
+  /** Locale + fallback label so the generated name follows the UI language. */
+  opts?: { locale?: string; fallbackLabel?: string },
+): string {
+  const stamp = new Date().toLocaleDateString(opts?.locale ?? "en-GB", {
+    month: "short",
+    year: "numeric",
+  });
   const domain = ["url", "app", "image", "pdf", "mp3"].includes(qrType)
     ? extractDomain(qrValue)
     : null;
-  const subject = (hint || "").trim() || domain || TYPE_LABELS[qrType] || "QR code";
+  const subject =
+    (hint || "").trim() || domain || TYPE_LABELS[qrType] || opts?.fallbackLabel || "QR code";
   const suffix = domain && !hint ? " QR" : "";
   return `${subject}${suffix} — ${stamp}`;
 }
@@ -61,14 +72,19 @@ export function suggestQRName(qrType: string, qrValue: string, hint?: string): s
 export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Props) {
   const { user } = useAuth();
   const nav = useNavigate();
+  const { t, locale } = useI18n();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const suggestion = useMemo(
-    () => suggestQRName(qrType, qrValue, nameHint),
-    [qrType, qrValue, nameHint],
+    () =>
+      suggestQRName(qrType, qrValue, nameHint, {
+        locale,
+        fallbackLabel: t("save.qrCode"),
+      }),
+    [qrType, qrValue, nameHint, locale, t],
   );
 
   // Pre-fill on every open so the field is never empty and Enter just works.
@@ -79,7 +95,9 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
 
   const handleClick = () => {
     if (!user) {
-      toast("Sign in to save QRs", { action: { label: "Sign in", onClick: () => nav("/auth") } });
+      toast(t("save.signIn"), {
+        action: { label: t("save.signInAction"), onClick: () => nav("/auth") },
+      });
       return;
     }
     setOpen(true);
@@ -90,7 +108,7 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
     // Blank input simply falls back to the suggestion — no forced typing.
     const finalName = (name.trim() || suggestion).slice(0, 120);
     setBusy(true);
-    const { error } = await supabase.from("saved_qrs").insert({
+    const { error } = await db.from("saved_qrs").insert({
       user_id: user.id,
       name: finalName,
       qr_type: qrType,
@@ -99,7 +117,7 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
     });
     setBusy(false);
     if (error) return toast.error(error.message);
-    toast.success(`Saved as “${finalName}”`);
+    toast.success(t("save.saved", { name: finalName }));
     setOpen(false);
     setName("");
   };
@@ -114,7 +132,7 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
         disabled={disabled}
         className="gap-1.5"
       >
-        <Bookmark className="w-4 h-4" /> Save
+        <Bookmark className="w-4 h-4" /> {t("save.cta")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
@@ -127,14 +145,12 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
           }}
         >
           <DialogHeader>
-            <DialogTitle>Save this QR</DialogTitle>
-            <DialogDescription>
-              We named it for you — press Enter to save, or type your own name.
-            </DialogDescription>
+            <DialogTitle>{t("save.title")}</DialogTitle>
+            <DialogDescription>{t("save.desc")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label>Name</Label>
+              <Label>{t("save.name")}</Label>
               <Input
                 ref={inputRef}
                 value={name}
@@ -148,14 +164,14 @@ export function SaveQRButton({ qrType, qrValue, config, disabled, nameHint }: Pr
                 placeholder={suggestion}
               />
             </div>
-            <p className="text-xs text-muted-foreground truncate">Value: {qrValue}</p>
+            <p className="text-xs text-muted-foreground truncate">{t("save.value")}: {qrValue}</p>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
+              {t("save.cancel")}
             </Button>
             <Button onClick={save} disabled={busy}>
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : t("save.cta")}
             </Button>
           </DialogFooter>
         </DialogContent>

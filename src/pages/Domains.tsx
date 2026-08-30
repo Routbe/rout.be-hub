@@ -30,12 +30,14 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   addCustomDomain,
   deleteCustomDomain,
   listCustomDomains,
   setDefaultDomain,
+  setDomainShortLinks,
   verifyCustomDomain,
   DOMAIN_CNAME_TARGET,
   DOMAIN_A_TARGET,
@@ -47,6 +49,7 @@ interface DomainRow {
   status: string;
   is_default: boolean;
   verification_token: string;
+  short_links_enabled: boolean;
   verified_at: string | null;
   last_checked_at: string | null;
   created_at: string;
@@ -231,7 +234,7 @@ export default function Domains() {
 
   const load = useCallback(async () => {
     try {
-      const data = (await listCustomDomains()) as DomainRow[];
+      const data = (await listCustomDomains()) as unknown as DomainRow[];
       setRows(data ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not load your domains");
@@ -296,7 +299,7 @@ export default function Domains() {
       title="Custom domains"
       description="Serve your dynamic QR links from your own domain, so a scan shows links.yourbrand.com/x/abc instead of ours."
     >
-      <div className="pb-28">
+      <div>
         <Accordion
           type="single"
           collapsible
@@ -462,6 +465,32 @@ export default function Domains() {
                       </Button>
                     </div>
                   </div>
+
+                  {row.status === "verified" && (
+                    <div className="mt-3 flex items-start gap-3 rounded-xl border border-border bg-muted/40 p-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground">Short links</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {row.short_links_enabled
+                            ? `New links can use ${row.domain}/s/your-code.`
+                            : `Off — new links use the ROUT domain instead.`}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={row.short_links_enabled}
+                        aria-label={`Short links on ${row.domain}`}
+                        onCheckedChange={async (enabled) => {
+                          await setDomainShortLinks({ data: { id: row.id, enabled } });
+                          toast.success(
+                            enabled
+                              ? `Short links on for ${row.domain}`
+                              : `Short links off for ${row.domain}`,
+                          );
+                          await load();
+                        }}
+                      />
+                    </div>
+                  )}
 
                   {liveResult ? (
                     <div className="mt-3 rounded-xl border border-border bg-muted/40 p-3">

@@ -1,20 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import DeveloperHub from "@/pages/DeveloperHub";
+import Page from "@/pages/DeveloperHub";
 
 export const Route = createFileRoute("/api")({
   head: () => ({
     meta: [
-      { title: "API & MCP endpoints — ROUT" },
-      {
-        name: "description",
-        content:
-          "API keys, rate limits, MCP tools and copy-paste quickstart snippets for the ROUT QR platform.",
-      },
-      { property: "og:title", content: "API & MCP endpoints — ROUT" },
-      { property: "og:description", content: "API keys, MCP tools and quickstart snippets." },
+      { title: "ROUT API voor developers" },
+      { name: "description", content: "Documentatie, endpoints en API-keys om QR-codes en korte links te automatiseren." },
+      { property: "og:title", content: "ROUT API voor developers" },
+      { property: "og:description", content: "Documentatie, endpoints en API-keys om QR-codes en korte links te automatiseren." },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: DeveloperHub,
+  component: Page,
 });

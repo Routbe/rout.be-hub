@@ -1,3 +1,4 @@
+import { BrandLoader } from "@/components/BrandLoader";
 import { useEffect } from "react";
 import { useNavigate } from "@/lib/router-compat";
 import { Loader2 } from "lucide-react";
@@ -24,7 +25,7 @@ export default function Studio() {
     >
       {loading || !user ? (
         <div className="flex min-h-[40vh] items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="relative h-24 w-24"><BrandLoader label="Studio laden…" /></div>
         </div>
       ) : (
         <div className="flex flex-1 flex-col space-y-6 pb-8">

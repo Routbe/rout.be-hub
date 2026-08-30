@@ -5,10 +5,10 @@
  * All handles below are the official ROUT channels (audited 2026-08).
  */
 export const SOCIAL_LINKS = {
-  instagram: "https://instagram.com/rout.be",
+  instagram: "https://instagram.com/routlabs",
   linkedin: "https://linkedin.com/company/routbe",
   github: "https://github.com/routbe",
-  bluesky: "https://bsky.app/profile/routbe",
+  bluesky: "https://bsky.app/profile/rout.be",
   mastodon: "https://mastodon.social/@routbe",
   eyou: "https://eyou.social/u/rout",
 } as const;

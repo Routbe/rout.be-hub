@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { BUNNY_PATH } from "@/lib/site";
 
 /**
  * Flat ROUT brand loader.
@@ -33,8 +34,8 @@ export function BrandLoader({
         style={{
           width: size,
           height: size,
-          WebkitMaskImage: "url(/img/rout-bunny.png)",
-          maskImage: "url(/img/rout-bunny.png)",
+          WebkitMaskImage: `url(${BUNNY_PATH})`,
+          maskImage: `url(${BUNNY_PATH})`,
           WebkitMaskSize: "contain",
           maskSize: "contain",
           WebkitMaskRepeat: "no-repeat",

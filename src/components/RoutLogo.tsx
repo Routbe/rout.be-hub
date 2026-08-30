@@ -1,5 +1,18 @@
-const bunny = "/img/rout-bunny.png";
 import { cn } from "@/lib/utils";
+
+/**
+ * Same-origin copy of the bunny badge. The QR renderer draws the centre logo
+ * onto a canvas, so a cross-origin URL (rout.be) is blocked by CORS and wipes
+ * the preview — this local asset always loads.
+ */
+const bunnySrc = "/img/logo.png";
+
+/**
+ * Theme-aware vector mark. `/logo.svg` is a clean, transparent outline of the
+ * ROUT bunny; it is painted through a CSS mask so it inherits `currentColor`
+ * (white in dark mode, near-black in light mode).
+ */
+const logoSrc = "/logo.svg";
 
 interface RoutLogoProps {
   className?: string;
@@ -8,33 +21,35 @@ interface RoutLogoProps {
 }
 
 /**
- * ROUT brand lockup — hand-drawn rabbit mark + monospace wordmark.
- * The rabbit is a CSS mask tinted with the neutral ink colour (black /
- * anthracite in light mode, off-white in dark) so the mark stays grown-up.
+ * ROUT brand lockup — official rout.be badge mark + monospace wordmark.
+ * The mark is the canonical colour logo (public/img/logo.png), mirrored from
+ * https://rout.be/img/logo.png, so header, footer, favicon and social cards
+ * all resolve to the same asset.
  */
 export function RoutLogo({ className, size = 28, showWordmark = true }: RoutLogoProps) {
   return (
-    <span className={cn("inline-flex items-center gap-2", className)}>
+    <span className={cn("inline-flex items-center gap-2.5 leading-none", className)}>
       <span
-        aria-hidden
-        className="block bg-foreground shrink-0"
+        role="img"
+        aria-label="ROUT"
+        className="block shrink-0 bg-current align-middle text-foreground"
         style={{
           width: size,
           height: size,
-          WebkitMaskImage: `url(${bunny})`,
-          maskImage: `url(${bunny})`,
-          WebkitMaskSize: "contain",
-          maskSize: "contain",
-          WebkitMaskRepeat: "no-repeat",
+          maskImage: `url(${logoSrc})`,
+          WebkitMaskImage: `url(${logoSrc})`,
           maskRepeat: "no-repeat",
-          WebkitMaskPosition: "center",
+          WebkitMaskRepeat: "no-repeat",
           maskPosition: "center",
+          WebkitMaskPosition: "center",
+          maskSize: "contain",
+          WebkitMaskSize: "contain",
         }}
       />
       {showWordmark && (
         <span
-          className="font-brand text-foreground tracking-[0.18em] font-bold leading-none"
-          style={{ fontSize: Math.round(size * 0.72) }}
+          className="font-brand relative top-px font-bold leading-none tracking-[0.16em] text-foreground"
+          style={{ fontSize: Math.round(size * 0.62) }}
         >
           ROUT
         </span>
@@ -43,4 +58,6 @@ export function RoutLogo({ className, size = 28, showWordmark = true }: RoutLogo
   );
 }
 
-export { bunny as routBunnySrc };
+// QR codes rasterise the mark onto a canvas, where `currentColor` has no
+// context — those keep using the full-colour raster badge.
+export { logoSrc as routLogoSrc, bunnySrc as routBunnySrc };

@@ -1,20 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import Manifesto from "@/pages/Manifesto";
+import Page from "@/pages/Manifesto";
 
 export const Route = createFileRoute("/manifesto")({
   head: () => ({
     meta: [
-      { title: "The ROUT manifesto — Why a QR generator needs a point of view" },
-      {
-        name: "description",
-        content:
-          "The four principles behind ROUT: sovereign infrastructure, open source, no stealth tracking and codes that outlive us.",
-      },
-      { property: "og:title", content: "The ROUT manifesto" },
-      { property: "og:description", content: "Why a QR generator needs a point of view." },
-      { property: "og:type", content: "article" },
-      { name: "twitter:card", content: "summary" },
+      { title: "Manifesto | ROUT" },
+      { name: "description", content: "Waar ROUT voor staat: eigenaarschap van je links, privacy en open technologie." },
+      { property: "og:title", content: "Manifesto | ROUT" },
+      { property: "og:description", content: "Waar ROUT voor staat: eigenaarschap van je links, privacy en open technologie." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: Manifesto,
+  component: Page,
 });

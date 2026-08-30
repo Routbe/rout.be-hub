@@ -8,12 +8,11 @@ import { z } from "zod";
  */
 export const getBootstrapState = createServerFn({ method: "GET" }).handler(async () => {
   try {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { count } = await supabaseAdmin
-      .from("user_roles")
-      .select("id", { count: "exact", head: true })
-      .eq("role", "admin");
-    return { needsFirstAdmin: (count ?? 0) === 0 };
+    const { ensureBootstrapAdmin } = await import("./auth/owner-admin.server");
+    // Zelfherstellend: bestaat er nog geen beheerder, dan krijgt het
+    // eigenaarsaccount (hallo@rout.be) of het oudste account de rol.
+    const hasAdmin = await ensureBootstrapAdmin();
+    return { needsFirstAdmin: !hasAdmin };
   } catch {
     return { needsFirstAdmin: false };
   }
@@ -44,15 +43,23 @@ export const suggestHandleForName = createServerFn({ method: "POST" })
     return { handle: await suggestFreeHandle(data.fullName) };
   });
 
-/**
- * Development-only shortcut: mints a confirmed test account and promotes it to
- * `admin`, so the /admin dashboard can be verified without a mail round-trip.
- * Hard-disabled on production builds.
+/*
+ * NOTE: the former `createTestSuperAdmin` shortcut was removed on purpose.
+ * It was an unauthenticated server function that minted a confirmed account
+ * with a fixed password and granted it the `admin` role, guarded only by
+ * `NODE_ENV`. Admin access is granted exclusively through `user_roles`.
  */
-export const createTestSuperAdmin = createServerFn({ method: "POST" }).handler(async () => {
-  if (process.env["NODE_ENV"] === "production") {
-    return { ok: false as const, reason: "Disabled in production." };
-  }
-  const { mintTestSuperAdmin } = await import("./onboarding.server");
-  return mintTestSuperAdmin();
-});
+
+
+/**
+ * Registration suggestion: takes the part before the `@` of an e-mail address
+ * and returns free handle variants with a 2-digit discriminator
+ * (e.g. `jona.delplanche48`). Availability is checked against the database, so
+ * the UI can never offer a handle that is already claimed.
+ */
+export const suggestHandlesFromEmailAddress = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => z.object({ email: z.string().max(320) }).parse(data))
+  .handler(async ({ data }) => {
+    const { suggestHandlesFromEmail } = await import("./onboarding.server");
+    return { handles: await suggestHandlesFromEmail(data.email) };
+  });

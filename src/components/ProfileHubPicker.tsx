@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { BadgeCheck, Loader2 } from "lucide-react";
 import { Link } from "@/lib/router-compat";
 import { Input } from "@/components/ui/input";
-import { supabase } from "@/integrations/supabase/client";
+import { useServerFn } from "@tanstack/react-start";
+import { getStudioProfile } from "@/lib/studio-profile.functions";
 import { useAuth } from "@/hooks/useAuth";
 import { HANDLE_MIN_LENGTH, handleIssue, normalizeHandle, profilePath } from "@/lib/profile";
 
@@ -21,6 +22,7 @@ export function ProfileHubPicker({ values, onChange }: Props) {
   const [handle, setHandle] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
   const [manual, setManual] = useState("");
+  const loadProfile = useServerFn(getStudioProfile);
 
   const origin = typeof window === "undefined" ? "https://rout.be" : window.location.origin;
   const host = origin.replace(/^https?:\/\//, "");
@@ -32,11 +34,12 @@ export function ProfileHubPicker({ values, onChange }: Props) {
         if (!cancelled) setLoading(false);
         return;
       }
-      const { data } = await supabase
-        .from("profiles")
-        .select("username, verified, status")
-        .eq("id", user.id)
-        .maybeSingle();
+      let data: Awaited<ReturnType<typeof loadProfile>> = null;
+      try {
+        data = await loadProfile();
+      } catch (error) {
+        console.error("[hub-picker:load:failed]", error);
+      }
       if (cancelled) return;
       if (data?.username) {
         const isVerified = Boolean(data.verified) && data.status === "active";
@@ -71,11 +74,11 @@ export function ProfileHubPicker({ values, onChange }: Props) {
   const shown = handle ?? normalizeHandle(manual);
 
   return (
-    <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+    <div className="space-y-3 rounded-xl border border-border bg-card p-4 sm:p-5">
       <div>
         <p className="text-sm font-medium text-foreground">Social Profile Hub</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Choose which @handle this QR code opens. Manage your profile content in the Studio.
+          Kies welke handle deze QR-code opent. Je profielinhoud beheer je in de Studio.
         </p>
       </div>
 
@@ -83,7 +86,7 @@ export function ProfileHubPicker({ values, onChange }: Props) {
         <span className="shrink-0 font-mono text-[13px] text-muted-foreground">@</span>
         <Input
           className="input-field h-11 min-w-0 flex-1 rounded-xl"
-          placeholder="yourname"
+          placeholder="jouwnaam"
           maxLength={30}
           minLength={HANDLE_MIN_LENGTH}
           autoCapitalize="none"
@@ -103,31 +106,30 @@ export function ProfileHubPicker({ values, onChange }: Props) {
         </p>
       )}
 
-      <div className="rounded-lg bg-muted/50 px-3 py-2">
-        <p className="break-all font-mono text-[13px] font-medium text-foreground">
-          rout.id/@{shown || "yourname"}
+      {/* Doelprofiel: ruime padding zodat de tekst nergens afgesneden wordt. */}
+      <div className="rounded-lg bg-muted/50 px-3 py-3 sm:px-4">
+        <p className="break-all font-mono text-[13px] font-medium leading-relaxed text-foreground">
+          {host}
+          {profilePath(shown || "jouwnaam", verified)}
         </p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          Free profile hosted on rout.id. Custom domains available on Pro.
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          Gratis profiel op rout.be. Custom domeinen beschikbaar op Pro. Gratis profielen gebruiken
+          de <strong>/u/</strong> namespace. Verifieer je account om je eigen unieke handle te
+          claimen.
         </p>
-        {!verified && (
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Free profiles live on the <strong>/u/</strong> namespace. Verify to claim your custom
-            handle.
-          </p>
-        )}
       </div>
 
       <Link
         to="/studio"
         className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-foreground text-sm font-medium text-background transition-opacity hover:opacity-90"
       >
-        ⚙ Manage Profile Hub →
+        ⚙ Beheer profielhub →
       </Link>
 
       {values.hub_url && (
-        <p className="break-all text-[11px] text-muted-foreground">Target: {values.hub_url}</p>
+        <p className="break-all text-[11px] text-muted-foreground">Doel: {values.hub_url}</p>
       )}
     </div>
   );
 }
+

@@ -1,12 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireAuth } from "@/lib/auth/middleware";
 import { hashApiKey, newApiKey } from "./api-keys.server";
 
 export const listApiKeys = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
+    const { data, error } = await context.db
       .from("api_keys")
       .select(
         "id, name, key_prefix, scopes, rate_limit, request_count, last_used_at, revoked_at, created_at",
@@ -18,7 +18,7 @@ export const listApiKeys = createServerFn({ method: "GET" })
   });
 
 export const createApiKey = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) =>
     z
       .object({
@@ -40,7 +40,7 @@ export const createApiKey = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { key, prefix } = newApiKey();
-    const { data: row, error } = await context.supabase
+    const { data: row, error } = await context.db
       .from("api_keys")
       .insert({
         user_id: context.userId,
@@ -59,10 +59,10 @@ export const createApiKey = createServerFn({ method: "POST" })
   });
 
 export const revokeApiKey = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((data) => z.object({ id: z.string().uuid() }).parse(data))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase
+    const { error } = await context.db
       .from("api_keys")
       .update({ revoked_at: new Date().toISOString() })
       .eq("id", data.id)

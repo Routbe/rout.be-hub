@@ -1,20 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import Studio from "@/pages/Studio";
+import Page from "@/pages/Studio";
 
 export const Route = createFileRoute("/studio")({
   head: () => ({
     meta: [
-      { title: "Profile Hub Studio — ROUT" },
-      {
-        name: "description",
-        content:
-          "Build your sovereign link-in-bio: components, themes, subdomain, DID verification and analytics.",
-      },
-      { property: "og:title", content: "Profile Hub Studio — ROUT" },
-      { property: "og:description", content: "Build your sovereign link-in-bio page." },
+      { title: "QR Studio — ontwerp je QR-code | ROUT" },
+      { name: "description", content: "Ontwerp QR-codes met eigen kleuren, vormen, frames en logo. Exporteer scherp in PNG, SVG of PDF." },
+      { property: "og:title", content: "QR Studio — ontwerp je QR-code | ROUT" },
+      { property: "og:description", content: "Ontwerp QR-codes met eigen kleuren, vormen, frames en logo. Exporteer scherp in PNG, SVG of PDF." },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: Studio,
+  component: Page,
 });

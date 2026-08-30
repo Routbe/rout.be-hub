@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
+import { Link2 } from "lucide-react";
 import { TrackingPanel, TrackedQR } from "@/components/TrackingPanel";
+import { prettyCaption } from "@/lib/qr-caption";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { QRPreview } from "@/components/QRPreview";
 import { QRTypeSelector, QRType } from "@/components/QRTypeSelector";
@@ -7,6 +9,7 @@ import { QRTypeSheet } from "@/components/QRTypeSheet";
 import { useI18n } from "@/lib/i18n";
 
 import { QRStyleTabs, FrameStyle } from "@/components/QRStyleTabs";
+import { ProfileShowcase } from "@/components/home/ProfileShowcase";
 import { BodyShape } from "@/components/BodyShapeSelector";
 import { DEFAULT_FRAME_TWEAKS, type FrameTweaks } from "@/components/QRFrames";
 
@@ -121,10 +124,26 @@ const Index = () => {
   const setRichField = (key: string, val: string) =>
     setRichValues((prev) => ({ ...prev, [qrType]: { ...(prev[qrType] ?? {}), [key]: val } }));
 
+  /**
+   * Diepe link vanuit Studio: `/qr?type=profile_hub` opent de generator meteen
+   * op de profielhub, zodat Studio geen eigen QR-widget hoeft te dupliceren.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const requested = new URLSearchParams(window.location.search).get("type");
+    if (requested === "profile_hub" || requested === "social") setQrType("social");
+  }, []);
+
+
   const [frameId, setFrameId] = useState<string | null>(null);
   const [frameLabel, setFrameLabel] = useState("");
   const [frameFont, setFrameFont] = useState("sans");
   const [frameTweaks, setFrameTweaks] = useState<FrameTweaks>(DEFAULT_FRAME_TWEAKS);
+
+  // Readable short link printed under the QR (opt-in, editable).
+  const [captionEnabled, setCaptionEnabled] = useState(false);
+  const [captionText, setCaptionText] = useState("");
+  const [captionTouched, setCaptionTouched] = useState(false);
 
   // Tracking
   const [trackedQr, setTrackedQr] = useState<TrackedQR | null>(null);
@@ -304,6 +323,19 @@ const Index = () => {
     if (!filenameTouched) setFilename(suggestedFilename);
   }, [suggestedFilename, filenameTouched]);
 
+  /** The active short link, stripped for display use. */
+  const captionSuggestion = trackedQr ? prettyCaption(trackedQr.redirect_url) : "";
+
+  // Follow the freshly minted short link until the user types their own text.
+  useEffect(() => {
+    if (!captionTouched && captionSuggestion) setCaptionText(captionSuggestion);
+  }, [captionSuggestion, captionTouched]);
+
+  const handleCaptionTextChange = (v: string) => {
+    setCaptionTouched(true);
+    setCaptionText(v);
+  };
+
   const handleFilenameChange = (v: string) => {
     setFilenameTouched(v.trim().length > 0);
     setFilename(v);
@@ -394,6 +426,8 @@ const Index = () => {
                   frameLabel={frameLabel}
                   frameFont={frameFont}
                   frameTweaks={frameTweaks}
+                  captionEnabled={captionEnabled}
+                  captionText={captionText}
                   printMm={sizeUnit === "in" ? Math.round(physicalSize * 25.4) : physicalSize}
                   onAutoFixContrast={() => {
                     // Snap to a guaranteed-safe pair (21:1) before exporting.
@@ -449,6 +483,23 @@ const Index = () => {
                 </div>
               </div>
             </div>
+
+            {qrMode === "static" && (
+              <div className="w-full max-w-md mt-4">
+                <button
+                  type="button"
+                  onClick={() => setQrMode("dynamic")}
+                  className="w-full rounded-2xl border border-dashed border-border bg-card/60 p-4 text-left transition-colors hover:bg-card"
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Link2 className="h-4 w-4" /> Maak er een short link van
+                  </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Kies je domein (ROUT of je eigen domein), krijg een korte link en tel elke scan.
+                  </span>
+                </button>
+              </div>
+            )}
 
             {qrMode === "dynamic" && (
               <div className="w-full max-w-md mt-4">
@@ -537,6 +588,8 @@ const Index = () => {
 
 
       <TrustBar />
+
+      <ProfileShowcase />
 
       <ValuesSection />
     </AppLayout>

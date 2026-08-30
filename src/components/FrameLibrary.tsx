@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { useI18n } from "@/lib/i18n";
 import { SelectionIndicator, selectionCardClass } from "@/components/SelectionIndicator";
+import { NoneGlyph } from "@/components/NoneGlyph";
 import {
   FRAMES,
   FRAME_CATEGORIES,
@@ -26,8 +27,62 @@ import {
   type FrameTweaks,
 } from "./QRFrames";
 
-/** Ready-made callout labels — the classic conversion boosters. */
-const LABEL_PRESETS = ["SCAN ME", "SCAN TO ORDER", "SCAN FOR MENU", "TAP & SCAN", "MEER INFO"];
+/**
+ * Ready-made callout labels, grouped by use case. Both Dutch and English
+ * wordings are offered because most ROUT codes end up in bilingual venues.
+ */
+const LABEL_GROUPS: { id: string; label: string; items: string[] }[] = [
+  {
+    id: "dining",
+    label: "Dining",
+    items: [
+      "SCAN TO ORDER",
+      "SCAN OM TE BESTELLEN",
+      "SCAN FOR MENU",
+      "SCAN VOOR MENU",
+      "ORDER AT TABLE",
+      "BESTEL AAN TAFEL",
+      "SEE OUR MENU",
+      "BEKIJK ONS MENU",
+      "PAY HERE",
+      "BETAAL HIER",
+      "WIFI & PASSWORD",
+      "WIFI & WACHTWOORD",
+      "WIFI PASSWORD",
+    ],
+  },
+  {
+    id: "cta",
+    label: "Call to action",
+    items: ["SCAN ME", "SCAN MIJ", "TAP & SCAN", "MORE INFO", "MEER INFO", "MORE INFORMATION"],
+  },
+  {
+    id: "social",
+    label: "Social",
+    items: [
+      "FOLLOW US",
+      "VOLG ONS",
+      "OUR WEBSITE",
+      "ONZE WEBSITE",
+      "INSTAGRAM",
+      "FACEBOOK",
+      "LINKEDIN",
+    ],
+  },
+  {
+    id: "business",
+    label: "Business",
+    items: [
+      "OUR LOCATION",
+      "ONZE LOCATIE",
+      "CONTACT",
+      "LEAVE A REVIEW",
+      "LAAT EEN REVIEW ACHTER",
+      "DONATE",
+      "DONEER",
+    ],
+  },
+];
 
 interface FrameLibraryProps {
   selectedFrameId: string | null;
@@ -76,7 +131,7 @@ export function FrameLibrary({
     <div className="space-y-3">
       {/* Header — mirrors the Pattern section: label left, fine-tune right */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-foreground">Frame style</p>
+        <p className="text-sm font-medium text-foreground">Kaderstijl</p>
         <button
           type="button"
           data-testid="customize-frame-trigger"
@@ -84,7 +139,7 @@ export function FrameLibrary({
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           <SlidersHorizontal className="h-3 w-3" aria-hidden />
-          Customize frame
+          Kader aanpassen
         </button>
       </div>
 
@@ -94,13 +149,17 @@ export function FrameLibrary({
           type="button"
           onClick={() => onFrameChange(null)}
           className={cn(
-            "px-3 h-7 rounded-full text-[11px] font-medium transition-all border",
+            "inline-flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] font-medium transition-all border",
             !selectedFrameId
               ? "bg-foreground text-background border-foreground"
               : "border-border bg-background text-muted-foreground hover:bg-[#F5F5F5]/50",
           )}
         >
-          None
+          <NoneGlyph
+            size="sm"
+            className={cn("h-3.5 w-3.5", !selectedFrameId && "border-background/40 bg-transparent text-background")}
+          />
+          Geen
         </button>
         {categories.map((c) => (
           <button
@@ -153,21 +212,30 @@ export function FrameLibrary({
       {selected && (
         <div className="space-y-2 pt-1">
           <Label className="text-sm text-muted-foreground">{t("style.frameText")}</Label>
-          <div className="flex flex-wrap gap-1.5">
-            {LABEL_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => onFrameLabelChange(preset)}
-                aria-pressed={frameLabel === preset}
-                className={selectionCardClass(
-                  frameLabel === preset,
-                  "h-7 rounded-full px-2.5 text-[11px] font-medium tracking-wide",
-                )}
-              >
-                <SelectionIndicator visible={frameLabel === preset} />
-                {preset}
-              </button>
+          <div className="max-h-44 space-y-2.5 overflow-y-auto rounded-2xl border border-border/70 bg-muted/20 p-2.5">
+            {LABEL_GROUPS.map((group) => (
+              <div key={group.id} className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {group.label}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {group.items.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => onFrameLabelChange(preset)}
+                      aria-pressed={frameLabel === preset}
+                      className={selectionCardClass(
+                        frameLabel === preset,
+                        "h-7 rounded-full px-2.5 text-[11px] font-medium tracking-wide",
+                      )}
+                    >
+                      <SelectionIndicator visible={frameLabel === preset} />
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -177,9 +245,9 @@ export function FrameLibrary({
       <Dialog open={customizeOpen} onOpenChange={setCustomizeOpen}>
         <DialogContent className="max-w-md rounded-3xl">
           <DialogHeader>
-            <DialogTitle>Customize frame</DialogTitle>
+            <DialogTitle>Kader aanpassen</DialogTitle>
             <DialogDescription>
-              Fine-tune the border, label and typography of the selected frame.
+              Verfijn de rand, tekst en typografie van het geselecteerde kader.
             </DialogDescription>
           </DialogHeader>
 
@@ -198,7 +266,7 @@ export function FrameLibrary({
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm text-muted-foreground">Border thickness</Label>
+                <Label className="text-sm text-muted-foreground">Randdikte</Label>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {frameTweaks.stroke.toFixed(1)}×
                 </span>
@@ -209,13 +277,13 @@ export function FrameLibrary({
                 step={0.1}
                 value={[frameTweaks.stroke]}
                 onValueChange={([v]) => setTweak({ stroke: v })}
-                aria-label="Frame border thickness"
+                aria-label="Kader randdikte"
               />
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm text-muted-foreground">Corner radius</Label>
+                <Label className="text-sm text-muted-foreground">Hoekronding</Label>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {frameTweaks.radius.toFixed(1)}×
                 </span>
@@ -226,13 +294,13 @@ export function FrameLibrary({
                 step={0.1}
                 value={[frameTweaks.radius]}
                 onValueChange={([v]) => setTweak({ radius: v })}
-                aria-label="Frame corner radius"
+                aria-label="Kader hoekronding"
               />
             </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-sm text-muted-foreground">Text padding</Label>
+                <Label className="text-sm text-muted-foreground">Tekstruimte</Label>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {frameTweaks.labelShift > 0 ? "+" : ""}
                   {frameTweaks.labelShift}
@@ -244,7 +312,7 @@ export function FrameLibrary({
                 step={1}
                 value={[frameTweaks.labelShift]}
                 onValueChange={([v]) => setTweak({ labelShift: v })}
-                aria-label="Frame text padding"
+                aria-label="Kader tekstruimte"
               />
             </div>
 
@@ -275,7 +343,7 @@ export function FrameLibrary({
               onClick={() => onFrameTweaksChange?.(DEFAULT_FRAME_TWEAKS)}
               className="text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
-              Reset frame fine-tuning
+              Kaderaanpassingen resetten
             </button>
           </div>
         </DialogContent>

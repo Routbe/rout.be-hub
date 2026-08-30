@@ -3,20 +3,35 @@
  * forward to the member's real inbox. The key is optional — without it every
  * call degrades to `not_configured` instead of throwing.
  */
+import { sql } from "@/lib/neon";
 
 const IMPROVMX_DOMAIN = "rout.be";
 const API_BASE = `https://api.improvmx.com/v3/domains/${IMPROVMX_DOMAIN}/aliases`;
+
+type Row = Record<string, unknown>;
 
 export type AliasFailure =
   | "not_configured"
   | "no_username"
   | "no_forward"
+  /** Forwarding address awaiting double opt-in confirmation. */
+  | "unconfirmed_forward"
   | "api_error"
-  | "not_found";
+  | "not_found"
+  /** Free/unverified account: aliases are reserved for paid or verified members. */
+  | "not_entitled";
+
 
 export type AliasResult =
   | { ok: true; alias: string; forward: string }
   | { ok: false; reason: AliasFailure; detail?: string };
+
+/** Maps an alias attempt onto the status column, without relying on narrowing. */
+function aliasStatusFor(result: AliasResult): string {
+  if (result.ok) return "active";
+  const reason = "reason" in result ? result.reason : null;
+  return reason === "not_configured" ? "pending" : "failed";
+}
 
 export function improvmxKey(): string | null {
   return process.env["IMPROVMX_API_KEY"] ?? null;
@@ -104,33 +119,56 @@ export async function pauseAlias(username: string): Promise<AliasResult> {
   return { ok: true, alias: `${alias}@${IMPROVMX_DOMAIN}`, forward: ALIAS_BLACKHOLE };
 }
 
-/** Looks the profile up and provisions its alias. Used by the payment webhook. */
+/**
+ * Looks the profile up and provisions its alias. Used by the payment webhook.
+ *
+ * Hard gate: only an active member who is paid or verified may hold a
+ * @rout.be alias. Free/unverified accounts never get one provisioned.
+ */
 export async function provisionAliasForUser(userId: string): Promise<AliasResult> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data: profile } = await supabaseAdmin
-    .from("profiles")
-    .select("username, forwarding_email")
-    .eq("id", userId)
-    .maybeSingle();
+  const rows = (await sql`
+    select username, forwarding_email, forwarding_email_verified, is_paid, verified, status,
+           is_banned, is_suspended
+      from public.profiles
+     where id = ${userId}
+     limit 1
+  `) as Row[];
+  const profile = rows[0];
 
-  if (!profile?.username) return { ok: false, reason: "no_username" };
+  if (!profile?.["username"]) return { ok: false, reason: "no_username" };
 
-  let forward = profile.forwarding_email;
+  const entitled =
+    (profile["is_paid"] === true || profile["verified"] === true) &&
+    profile["status"] === "active" &&
+    profile["is_banned"] !== true &&
+    profile["is_suspended"] !== true;
+
+  if (!entitled) {
+    await sql`update public.profiles set alias_status = 'none' where id = ${userId}`;
+    return { ok: false, reason: "not_entitled" };
+  }
+
+
+  let forward = (profile["forwarding_email"] as string | null) ?? null;
+  if (forward && profile["forwarding_email_verified"] !== true) {
+    // Double opt-in: never forward to an address the owner has not confirmed.
+    await sql`update public.profiles set alias_status = 'pending' where id = ${userId}`;
+    return { ok: false, reason: "unconfirmed_forward" };
+  }
   if (!forward) {
-    const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
-    forward = data?.user?.email ?? null;
+    const userRows = (await sql`select email from public.users where id = ${userId} limit 1`) as Row[];
+    forward = (userRows[0]?.["email"] as string | null) ?? null;
   }
   if (!forward) return { ok: false, reason: "no_forward" };
 
-  const result = await createAlias(profile.username, forward);
 
-  await supabaseAdmin
-    .from("profiles")
-    .update({
-      forwarding_email: forward,
-      alias_status: result.ok ? "active" : result.reason === "not_configured" ? "pending" : "failed",
-    })
-    .eq("id", userId);
+  const result = await createAlias(profile["username"] as string, forward);
+
+  await sql`
+    update public.profiles
+       set forwarding_email = ${forward}, alias_status = ${aliasStatusFor(result)}
+     where id = ${userId}
+  `;
 
   return result;
 }
@@ -149,16 +187,14 @@ export async function renameAliasForUser(
 
 /** Freezes (bans) the alias: delete on ImprovMX + mark the profile. */
 export async function freezeAliasForUser(userId: string): Promise<AliasResult> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data: profile } = await supabaseAdmin
-    .from("profiles")
-    .select("username")
-    .eq("id", userId)
-    .maybeSingle();
-  if (!profile?.username) return { ok: false, reason: "no_username" };
+  const rows = (await sql`
+    select username from public.profiles where id = ${userId} limit 1
+  `) as Row[];
+  const profile = rows[0];
+  if (!profile?.["username"]) return { ok: false, reason: "no_username" };
 
-  const result = await deleteAlias(profile.username);
-  await supabaseAdmin.from("profiles").update({ alias_status: "frozen" }).eq("id", userId);
+  const result = await deleteAlias(profile["username"] as string);
+  await sql`update public.profiles set alias_status = 'frozen' where id = ${userId}`;
   return result;
 }
 

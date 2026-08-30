@@ -1,3 +1,4 @@
+import { BrandLoader } from "@/components/BrandLoader";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@/lib/router-compat";
 import {
@@ -9,6 +10,8 @@ import {
   MoreHorizontal,
   Plus,
   Sparkles,
+  UserRound,
+
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,8 +22,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { QrsPanel } from "@/components/dashboard/QrsPanel";
+import { IdentityCard } from "@/components/dashboard/IdentityCard";
+import { NotificationsPanel } from "@/components/dashboard/NotificationsPanel";
+import { BadgeActivityPanel } from "@/components/dashboard/BadgeActivityPanel";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { useI18n } from "@/lib/i18n";
+import { formatDate } from "@/lib/format";
+import { db } from "@/lib/db/client";
 import { toast } from "sonner";
 
 interface Totals {
@@ -74,6 +82,7 @@ function Sparkline({ data }: { data: number[] }) {
  * /studio), which keeps this route light on mobile.
  */
 export default function Dashboard() {
+  const { locale } = useI18n();
   const { user, loading } = useAuth();
   const nav = useNavigate();
   const [totals, setTotals] = useState<Totals | null>(null);
@@ -88,8 +97,8 @@ export default function Dashboard() {
     let alive = true;
     (async () => {
       const [saved, tracked] = await Promise.all([
-        supabase.from("saved_qrs").select("id", { count: "exact", head: true }),
-        supabase.from("tracked_qrs").select("id").eq("user_id", user.id),
+        db.from("saved_qrs").select("id", { count: "exact", head: true }),
+        db.from("tracked_qrs").select("id").eq("user_id", user.id),
       ]);
       const ids = (tracked.data ?? []).map((r: { id: string }) => r.id);
       const trend = new Array(14).fill(0) as number[];
@@ -98,11 +107,11 @@ export default function Dashboard() {
         const since = new Date(Date.now() - 13 * 86400000);
         since.setHours(0, 0, 0, 0);
         const [{ count }, { data: recentScans }] = await Promise.all([
-          supabase
+          db
             .from("qr_scans")
             .select("id", { count: "exact", head: true })
             .in("tracked_qr_id", ids),
-          supabase
+          db
             .from("qr_scans")
             .select("scanned_at")
             .in("tracked_qr_id", ids)
@@ -126,12 +135,12 @@ export default function Dashboard() {
     let alive = true;
     (async () => {
       const [{ data: s }, { data: t }] = await Promise.all([
-        supabase
+        db
           .from("saved_qrs")
           .select("id, name, qr_type, created_at")
           .order("created_at", { ascending: false })
           .limit(5),
-        supabase
+        db
           .from("tracked_qrs")
           .select("id, label, target_type, target_url, created_at")
           .eq("user_id", user.id)
@@ -148,7 +157,7 @@ export default function Dashboard() {
       const scanCounts = new Map<string, number>();
       if (trackedRows.length) {
         const ids = trackedRows.map((r) => r.id);
-        const { data: scans } = await supabase
+        const { data: scans } = await db
           .from("qr_scans")
           .select("tracked_qr_id")
           .in("tracked_qr_id", ids);
@@ -188,7 +197,7 @@ export default function Dashboard() {
     return (
       <AppLayout title="Dashboard">
         <div className="flex min-h-[40vh] items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="relative h-24 w-24"><BrandLoader label="Dashboard laden…" /></div>
         </div>
       </AppLayout>
     );
@@ -203,10 +212,16 @@ export default function Dashboard() {
         <>
           <div className="hidden flex-wrap gap-2 sm:flex">
             <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link to="/dashboard/profile">
+                <UserRound className="h-4 w-4" /> Profile
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
               <Link to="/studio">
                 <Sparkles className="h-4 w-4" /> Open Studio
               </Link>
             </Button>
+
             <Button asChild size="sm" className="gap-1.5">
               <Link to="/">
                 <Plus className="h-4 w-4" /> New QR
@@ -228,6 +243,8 @@ export default function Dashboard() {
         </>
       }
     >
+      <IdentityCard />
+
       <section aria-label="Analytics" className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
         <Metric label="Saved QRs" value={totals?.saved ?? "—"} />
         <Metric label="Short links" value={totals?.tracked ?? "—"} hint="Repointable" />
@@ -283,7 +300,7 @@ export default function Dashboard() {
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                     <span className="capitalize">{item.type}</span>
                     <span aria-hidden>·</span>
-                    <span>{new Date(item.created_at).toLocaleDateString()}</span>
+                    <span>{formatDate(item.created_at, locale)}</span>
                     <span aria-hidden>·</span>
                     <span>{item.scans} scans</span>
                   </p>
@@ -342,6 +359,11 @@ export default function Dashboard() {
           </Link>
         </Button>
       </section>
+
+      <div className="mb-4 space-y-4">
+        <NotificationsPanel />
+        <BadgeActivityPanel />
+      </div>
 
       <QrsPanel />
     </AppLayout>
