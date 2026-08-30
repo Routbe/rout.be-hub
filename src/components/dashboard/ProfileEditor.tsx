@@ -2091,14 +2091,15 @@ export function ProfileEditor() {
 
           <div className="transition-all duration-300 ease-out">
           {previewDevice === "mobile" ? (
-            /* Smartphone: 9:19.5, ronde hoeken, dunne bezel en camera-eiland */
-            <div className="mx-auto w-full max-w-[290px] overflow-hidden rounded-[36px] border border-border/70 bg-foreground/90 p-[10px] shadow-[0_24px_60px_-20px_rgba(0,0,0,0.55)] transition-all duration-300">
+            /* Smartphone: 9:18, ronde hoeken, bezel en camera-eiland; gecentreerd
+               en begrensd op 580px hoog zodat hij in de sticky kolom past */
+            <div className="mx-auto flex max-h-[580px] w-full max-w-[290px] flex-1 items-stretch overflow-hidden rounded-[36px] border-[6px] border-zinc-800 bg-black shadow-2xl transition-all duration-300">
               <div className="relative w-full overflow-hidden rounded-[28px] bg-background">
-                <span className="absolute left-1/2 top-2 z-10 flex h-3 w-20 -translate-x-1/2 items-center justify-center gap-1 rounded-full bg-foreground/80">
+                <span className="absolute left-1/2 top-2 z-10 flex h-3 w-20 -translate-x-1/2 items-center justify-center gap-1 rounded-full bg-zinc-800">
                   <span className="h-1 w-8 rounded-full bg-background/25" />
                   <span className="h-1.5 w-1.5 rounded-full bg-background/35" />
                 </span>
-                <div className="preview-noscroll aspect-[9/19.5] w-full overflow-y-auto overflow-x-hidden text-foreground">
+                <div className="preview-noscroll aspect-[9/18] max-h-[560px] w-full overflow-y-auto overflow-x-hidden text-foreground">
                   <ProfileView profile={previewDraft} free={!verified} />
                 </div>
               </div>
