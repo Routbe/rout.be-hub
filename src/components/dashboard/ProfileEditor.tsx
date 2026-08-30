@@ -2048,9 +2048,10 @@ export function ProfileEditor() {
         </div>
 
         
-        {/* Live preview — desktop: pinned next to the editor, altijd ónder de vaste header (z-10 < z-50) */}
-        <aside className="z-10 hidden self-start lg:sticky lg:top-20 lg:col-span-5 lg:block">
-          <div className="flex flex-col items-center justify-start rounded-3xl border border-border/80 bg-card/40 p-6 shadow-2xl">
+        {/* Live preview — desktop: volledig stationair naast de editor terwijl
+            de formulieren links scrollen (z-10 < vaste header z-50) */}
+        <aside className="z-10 hidden self-start lg:sticky lg:top-4 lg:col-span-5 lg:flex lg:h-[calc(100vh-2rem)] lg:flex-col lg:justify-between lg:py-2">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-start rounded-3xl border border-border/80 bg-card/40 p-6 shadow-2xl">
 
           <div className="mb-4 flex w-full items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
